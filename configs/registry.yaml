@@ -1,0 +1,29 @@
+# Nexus Registry — Configuration Template
+# Copy to registry.local.yaml or set env vars with the same names uppercased.
+
+registry:
+  port: 8080
+  read_timeout_seconds: 30
+  write_timeout_seconds: 30
+  idle_timeout_seconds: 120
+
+database:
+  url: "postgres://nexus:nexus@localhost:5432/nexus?sslmode=disable"
+  max_connections: 25
+  min_connections: 5
+  max_idle_time_seconds: 300
+
+log:
+  level: info   # debug | info | warn | error
+  format: json  # json | console
+
+identity:
+  ca_cert_path: ""      # path to Nexus CA certificate PEM
+  ca_key_path: ""       # path to Nexus CA private key PEM
+  cert_validity_days: 365
+
+dns:
+  challenge_ttl_minutes: 15
+
+trust_ledger:
+  enabled: true

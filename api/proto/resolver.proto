@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package nexus.resolver.v1;
+
+option go_package = "github.com/nexus-protocol/nexus/api/proto/resolver/v1;resolverv1";
+
+import "google/api/annotations.proto";
+
+// ResolverService translates agent:// URIs into transport endpoints.
+service ResolverService {
+  // Resolve returns the transport endpoint for a given agent URI.
+  rpc Resolve(ResolveRequest) returns (ResolveResponse) {
+    option (google.api.http) = {
+      get: "/v1/resolve"
+    };
+  }
+
+  // ResolveMany resolves a batch of agent URIs in a single request.
+  rpc ResolveMany(ResolveManyRequest) returns (ResolveManyResponse) {
+    option (google.api.http) = {
+      post: "/v1/resolve/batch"
+      body: "*"
+    };
+  }
+}
+
+// ResolveRequest contains the components of an agent:// URI.
+message ResolveRequest {
+  // trust_root is the hostname of the Nexus registry (e.g., "nexus.io").
+  string trust_root = 1;
+
+  // capability_node is the hierarchical classification path (e.g., "finance/taxes").
+  string capability_node = 2;
+
+  // agent_id is the unique agent identifier (e.g., "agent_7x2v9q...").
+  string agent_id = 3;
+}
+
+// ResolveResponse contains the resolved endpoint information.
+message ResolveResponse {
+  // uri is the canonical agent:// URI.
+  string uri = 1;
+
+  // endpoint is the resolved transport endpoint (HTTPS/gRPC/WebSocket URL).
+  string endpoint = 2;
+
+  // status is the current agent status.
+  string status = 3;
+
+  // cert_serial is the serial number of the agent's X.509 certificate.
+  string cert_serial = 4;
+}
+
+// ResolveManyRequest contains multiple agent URI components.
+message ResolveManyRequest {
+  repeated ResolveRequest requests = 1;
+}
+
+// ResolveManyResponse contains the batch resolve results.
+message ResolveManyResponse {
+  repeated ResolveResult results = 1;
+}
+
+// ResolveResult is a single result in a batch response.
+message ResolveResult {
+  // request is the original request echoed back.
+  ResolveRequest request = 1;
+
+  // response is populated on success.
+  ResolveResponse response = 2;
+
+  // error is non-empty when resolution failed for this entry.
+  string error = 3;
+}

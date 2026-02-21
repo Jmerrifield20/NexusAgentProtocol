@@ -1,0 +1,14 @@
+# Nexus Resolver — Configuration Template
+# Copy to resolver.local.yaml or set env vars with the same names uppercased.
+
+resolver:
+  grpc_port: 9090               # gRPC service port
+  http_port: 9091               # grpc-gateway REST/JSON port
+  registry_addr: "localhost:8080"  # host:port of the registry HTTP API
+  cache_ttl_seconds: 60         # endpoint cache TTL (0 = disabled)
+  http_timeout_seconds: 5       # per-request timeout for registry calls
+  eviction_interval_seconds: 60 # how often expired cache entries are evicted
+
+log:
+  level: info
+  format: json

@@ -1,0 +1,33 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Generated certificates — never commit private keys
+certs/*.key
+certs/ca.key
+
+# Go test artifacts
+coverage.out
+coverage.html
+
+# Build cache
+.cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Local config overrides
+configs/*.local.yaml
+
+# Docker volumes
+postgres_data/
+
+# Next.js
+web/.next/
+web/node_modules/
+web/out/

@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nexus
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: migrate/migrate:v4.17.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../migrations:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://nexus:nexus@postgres:5432/nexus?sslmode=disable"
+      - "up"
+    restart: on-failure
+
+  registry:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.registry
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: "postgres://nexus:nexus@postgres:5432/nexus?sslmode=disable"
+      REGISTRY_PORT: "8080"
+      GIN_MODE: release
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  resolver:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.resolver
+    restart: unless-stopped
+    depends_on:
+      registry:
+        condition: service_healthy
+    environment:
+      RESOLVER_GRPC_PORT: "9090"
+      RESOLVER_HTTP_PORT: "9091"
+      RESOLVER_REGISTRY_ADDR: "registry:8080"
+      RESOLVER_CACHE_TTL_SECONDS: "60"
+    ports:
+      - "9090:9090"   # gRPC
+      - "9091:9091"   # grpc-gateway REST/JSON
+
+volumes:
+  postgres_data:

@@ -1,0 +1,192 @@
+package identity
+
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"net"
+	"net/url"
+	"time"
+)
+
+const agentKeyBits = 2048
+
+// IssuedCert holds the result of any certificate issuance operation.
+type IssuedCert struct {
+	CertPEM string
+	KeyPEM  string
+	Serial  string
+	Cert    *x509.Certificate // parsed certificate for in-process use
+}
+
+// TLSCertificate converts the PEM-encoded cert+key into a tls.Certificate.
+func (ic *IssuedCert) TLSCertificate() (tls.Certificate, error) {
+	return tls.X509KeyPair([]byte(ic.CertPEM), []byte(ic.KeyPEM))
+}
+
+// Issuer issues and verifies X.509 certificates signed by the Nexus CA.
+type Issuer struct {
+	ca *CAManager
+}
+
+// NewIssuer creates an Issuer backed by the given CAManager.
+func NewIssuer(ca *CAManager) *Issuer {
+	return &Issuer{ca: ca}
+}
+
+// CACertPEM returns the CA certificate in PEM format.
+// Clients use this to configure their TLS trust store.
+func (i *Issuer) CACertPEM() string {
+	return string(i.ca.CertPEM())
+}
+
+// IssueAgentCert issues an X.509 certificate for an agent identity.
+//
+// The certificate contains:
+//   - Subject CN: ownerDomain
+//   - URI SAN: agentURI  (e.g. agent://nexus.io/finance/taxes/agent_xyz)
+//   - DNS SAN: ownerDomain
+//   - EKU: ClientAuth + ServerAuth
+func (i *Issuer) IssueAgentCert(agentURI, ownerDomain string, validFor time.Duration) (*IssuedCert, error) {
+	if i.ca.cert == nil || i.ca.key == nil {
+		return nil, fmt.Errorf("CA not loaded; call LoadOrCreate first")
+	}
+	if validFor == 0 {
+		validFor = 365 * 24 * time.Hour
+	}
+
+	uriSAN, err := url.Parse(agentURI)
+	if err != nil {
+		return nil, fmt.Errorf("parse agent URI %q: %w", agentURI, err)
+	}
+
+	agentKey, err := rsa.GenerateKey(rand.Reader, agentKeyBits)
+	if err != nil {
+		return nil, fmt.Errorf("generate agent key: %w", err)
+	}
+
+	serial, err := randomSerial()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   ownerDomain,
+			Organization: []string{"Nexus Agentic Protocol"},
+		},
+		NotBefore:   now.Add(-time.Minute),
+		NotAfter:    now.Add(validFor),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		URIs:        []*url.URL{uriSAN},
+		DNSNames:    []string{ownerDomain},
+	}
+
+	return i.sign(template, &agentKey.PublicKey, agentKey)
+}
+
+// IssueServerCert issues a TLS server certificate for the registry itself.
+func (i *Issuer) IssueServerCert(dnsNames []string, ips []net.IP, validFor time.Duration) (*IssuedCert, error) {
+	if i.ca.cert == nil || i.ca.key == nil {
+		return nil, fmt.Errorf("CA not loaded; call LoadOrCreate first")
+	}
+	if validFor == 0 {
+		validFor = 365 * 24 * time.Hour
+	}
+
+	serverKey, err := rsa.GenerateKey(rand.Reader, agentKeyBits)
+	if err != nil {
+		return nil, fmt.Errorf("generate server key: %w", err)
+	}
+
+	serial, err := randomSerial()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   "Nexus Registry",
+			Organization: []string{"Nexus Agentic Protocol"},
+		},
+		NotBefore:   now.Add(-time.Minute),
+		NotAfter:    now.Add(validFor),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:    dnsNames,
+		IPAddresses: ips,
+	}
+
+	return i.sign(template, &serverKey.PublicKey, serverKey)
+}
+
+// VerifyAgentCert parses and verifies a PEM-encoded agent certificate against the CA.
+func (i *Issuer) VerifyAgentCert(certPEM string) (*x509.Certificate, error) {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode certificate PEM")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse certificate: %w", err)
+	}
+	return i.VerifyPeerCert(cert)
+}
+
+// VerifyPeerCert verifies a parsed certificate against the CA (used by mTLS middleware).
+func (i *Issuer) VerifyPeerCert(cert *x509.Certificate) (*x509.Certificate, error) {
+	opts := x509.VerifyOptions{
+		Roots:     i.ca.CertPool(),
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	if _, err := cert.Verify(opts); err != nil {
+		return nil, fmt.Errorf("certificate not trusted: %w", err)
+	}
+	return cert, nil
+}
+
+// CertPool exposes the CA's cert pool (so callers only need the Issuer, not the CAManager).
+func (i *Issuer) CertPool() *x509.CertPool {
+	return i.ca.CertPool()
+}
+
+// AgentURIFromCert extracts the agent:// URI from a certificate's URI SANs.
+func AgentURIFromCert(cert *x509.Certificate) (string, error) {
+	for _, u := range cert.URIs {
+		if u.Scheme == "agent" {
+			return u.String(), nil
+		}
+	}
+	return "", fmt.Errorf("no agent:// URI SAN found in certificate (CN=%s)", cert.Subject.CommonName)
+}
+
+// sign creates and signs a certificate with the CA.
+func (i *Issuer) sign(template *x509.Certificate, pub *rsa.PublicKey, priv *rsa.PrivateKey) (*IssuedCert, error) {
+	certDER, err := x509.CreateCertificate(rand.Reader, template, i.ca.cert, pub, i.ca.key)
+	if err != nil {
+		return nil, fmt.Errorf("create certificate: %w", err)
+	}
+	cert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		return nil, fmt.Errorf("parse issued certificate: %w", err)
+	}
+
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)}))
+
+	return &IssuedCert{
+		CertPEM: certPEM,
+		KeyPEM:  keyPEM,
+		Serial:  template.SerialNumber.Text(16),
+		Cert:    cert,
+	}, nil
+}

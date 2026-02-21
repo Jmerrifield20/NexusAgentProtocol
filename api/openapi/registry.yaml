@@ -1,0 +1,378 @@
+openapi: "3.1.0"
+info:
+  title: Nexus Agent Registry API
+  description: |
+    REST API for registering, resolving, and revoking agents on the
+    Nexus Agentic Protocol (NAP) registry.
+  version: "0.1.0"
+  contact:
+    name: Nexus Project Team
+    url: https://nexus.io
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+
+servers:
+  - url: https://registry.nexus.io/api/v1
+    description: Production registry
+  - url: http://localhost:8080/api/v1
+    description: Local development
+
+tags:
+  - name: agents
+    description: Agent registration and management
+  - name: resolve
+    description: URI resolution
+
+paths:
+  /agents:
+    post:
+      operationId: registerAgent
+      tags: [agents]
+      summary: Register a new agent
+      description: |
+        Creates a new agent registration. The agent starts in `pending` status
+        until domain ownership is verified via DNS-01 challenge.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Agent registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    get:
+      operationId: listAgents
+      tags: [agents]
+      summary: List registered agents
+      parameters:
+        - name: trust_root
+          in: query
+          schema:
+            type: string
+          description: Filter by trust root hostname
+        - name: capability_node
+          in: query
+          schema:
+            type: string
+          description: Filter by capability node path
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Paginated agent list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Agent"
+                  count:
+                    type: integer
+
+  /agents/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: Agent UUID
+
+    get:
+      operationId: getAgent
+      tags: [agents]
+      summary: Get agent by ID
+      responses:
+        "200":
+          description: Agent record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    patch:
+      operationId: updateAgent
+      tags: [agents]
+      summary: Update agent fields
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRequest"
+      responses:
+        "200":
+          description: Updated agent record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    delete:
+      operationId: deleteAgent
+      tags: [agents]
+      summary: Delete agent registration
+      responses:
+        "204":
+          description: Agent deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /agents/{id}/activate:
+    post:
+      operationId: activateAgent
+      tags: [agents]
+      summary: Activate a pending agent (post DNS-01 verification)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Agent activated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: activated
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /agents/{id}/revoke:
+    post:
+      operationId: revokeAgent
+      tags: [agents]
+      summary: Revoke an agent's registration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Agent revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: revoked
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /resolve:
+    get:
+      operationId: resolveAgent
+      tags: [resolve]
+      summary: Resolve an agent:// URI to its transport endpoint
+      parameters:
+        - name: trust_root
+          in: query
+          required: true
+          schema:
+            type: string
+          example: nexus.io
+        - name: capability_node
+          in: query
+          required: true
+          schema:
+            type: string
+          example: finance/taxes
+        - name: agent_id
+          in: query
+          required: true
+          schema:
+            type: string
+          example: agent_7x2v9qaabbcc
+      responses:
+        "200":
+          description: Resolution result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResolveResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /healthz:
+    get:
+      operationId: healthCheck
+      summary: Health check
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+components:
+  schemas:
+    Agent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        trust_root:
+          type: string
+          example: nexus.io
+        capability_node:
+          type: string
+          example: finance/taxes
+        agent_id:
+          type: string
+          example: agent_7x2v9qaabbcc
+        display_name:
+          type: string
+        description:
+          type: string
+        endpoint:
+          type: string
+          format: uri
+        owner_domain:
+          type: string
+        status:
+          type: string
+          enum: [pending, active, revoked, expired]
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    RegisterRequest:
+      type: object
+      required: [trust_root, capability_node, display_name, endpoint, owner_domain]
+      properties:
+        trust_root:
+          type: string
+          example: nexus.io
+        capability_node:
+          type: string
+          example: finance/taxes
+        display_name:
+          type: string
+        description:
+          type: string
+        endpoint:
+          type: string
+          format: uri
+        owner_domain:
+          type: string
+        public_key_pem:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+
+    UpdateRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+        description:
+          type: string
+        endpoint:
+          type: string
+          format: uri
+        public_key_pem:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+
+    ResolveResult:
+      type: object
+      properties:
+        uri:
+          type: string
+          example: "agent://nexus.io/finance/taxes/agent_7x2v9q"
+        endpoint:
+          type: string
+          format: uri
+        status:
+          type: string
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
