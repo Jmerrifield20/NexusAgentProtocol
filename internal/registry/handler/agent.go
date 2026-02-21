@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -74,7 +75,16 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 	trustRoot := c.Query("trust_root")
 	capNode := c.Query("capability_node")
 
-	agents, err := h.svc.List(c.Request.Context(), trustRoot, capNode, 50, 0)
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	agents, err := h.svc.List(c.Request.Context(), trustRoot, capNode, limit, offset)
 	if err != nil {
 		h.logger.Error("list agents", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list agents"})
@@ -140,7 +150,32 @@ func (h *AgentHandler) DeleteAgent(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+	ctx := c.Request.Context()
+
+	agent, err := h.svc.Get(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get agent"})
+		return
+	}
+
+	// Authorisation: token must belong to this agent or carry nexus:admin scope.
+	if h.tokens != nil {
+		claims := identity.ClaimsFromCtx(c)
+		if claims == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		if claims.AgentURI != agent.URI() && !identity.HasScope(claims, "nexus:admin") {
+			c.JSON(http.StatusForbidden, gin.H{"error": "cannot delete another agent's registration"})
+			return
+		}
+	}
+
+	if err := h.svc.Delete(ctx, id); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
 			return

@@ -1,4 +1,4 @@
-.PHONY: dev test build migrate lint clean proto gen-ca show-ca
+.PHONY: dev test test-integration build migrate lint clean proto gen-ca show-ca
 
 # Default target
 all: build
@@ -19,6 +19,15 @@ build:
 # Run all tests
 test:
 	go test -race -count=1 ./...
+
+# Run integration tests (requires Postgres via docker-compose)
+test-integration:
+	docker compose -f docker/docker-compose.yml up -d postgres
+	@sleep 3
+	$(MAKE) migrate
+	DATABASE_URL="postgres://nexus:nexus@localhost:5432/nexus?sslmode=disable" \
+		go test -tags integration -race -count=1 ./internal/registry/...
+	docker compose -f docker/docker-compose.yml down
 
 # Run tests with coverage
 test-cover:

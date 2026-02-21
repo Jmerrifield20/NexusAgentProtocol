@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nexus-protocol/nexus/internal/identity"
@@ -37,6 +39,7 @@ func run(logger *zap.Logger) error {
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("configs")
 	viper.AddConfigPath(".")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 
 	viper.SetDefault("registry.port", 8080)
@@ -46,6 +49,9 @@ func run(logger *zap.Logger) error {
 	viper.SetDefault("identity.cert_dir", "certs")
 	viper.SetDefault("identity.token_ttl_seconds", 3600)
 	viper.SetDefault("identity.tls_enabled", true)
+	viper.SetDefault("registry.cors_origins", []string{"*"})
+	viper.SetDefault("registry.rate_limit_rps", 20)
+	viper.SetDefault("registry.skip_dns_verify", false)
 
 	if err := viper.ReadInConfig(); err != nil {
 		var cfgNotFound viper.ConfigFileNotFoundError
@@ -108,7 +114,15 @@ func run(logger *zap.Logger) error {
 	repo := repository.NewAgentRepository(db)
 	dnsRepo := repository.NewDNSChallengeRepository(db)
 	dnsSvc := service.NewDNSChallengeService(dnsRepo, nil, logger) // nil = real DNS lookups
-	svc := service.NewAgentService(repo, issuer, ledger, dnsSvc, logger)
+
+	// When REGISTRY_SKIP_DNS_VERIFY=true, pass nil so activation skips the DNS gate.
+	// Use this for local development only — never in production.
+	var dnsVerifier service.DomainVerifier = dnsSvc
+	if viper.GetBool("registry.skip_dns_verify") {
+		logger.Warn("DNS verification disabled — REGISTRY_SKIP_DNS_VERIFY is set; do not use in production")
+		dnsVerifier = nil
+	}
+	svc := service.NewAgentService(repo, issuer, ledger, dnsVerifier, logger)
 	agentHandler := handler.NewAgentHandler(svc, tokens, logger)
 	identityHandler := handler.NewIdentityHandler(issuer, tokens, logger)
 	ledgerHandler := handler.NewLedgerHandler(ledger, logger)
@@ -121,6 +135,31 @@ func run(logger *zap.Logger) error {
 	}
 	router := gin.New()
 	router.Use(gin.Recovery())
+
+	// CORS
+	corsOrigins := viper.GetStringSlice("registry.cors_origins")
+	corsConfig := cors.Config{
+		AllowOrigins:     corsOrigins,
+		AllowMethods:     []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: !containsWildcard(corsOrigins),
+		MaxAge:           12 * time.Hour,
+	}
+	router.Use(cors.New(corsConfig))
+
+	// Request body size limit (1 MB)
+	router.Use(func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+		c.Next()
+	})
+
+	// Per-IP rate limiting
+	rps := viper.GetInt("registry.rate_limit_rps")
+	if rps > 0 {
+		router.Use(handler.RateLimiter(rps, rps*2))
+	}
+
 	router.Use(requestLogger(logger))
 
 	// Health (public, no auth)
@@ -212,6 +251,16 @@ func run(logger *zap.Logger) error {
 
 	logger.Info("registry stopped")
 	return nil
+}
+
+// containsWildcard returns true if origins includes "*".
+func containsWildcard(origins []string) bool {
+	for _, o := range origins {
+		if strings.TrimSpace(o) == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 // requestLogger returns a Gin middleware that logs each request with zap.

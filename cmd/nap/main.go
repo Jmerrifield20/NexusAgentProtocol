@@ -19,6 +19,9 @@ import (
 	"github.com/spf13/viper"
 )
 
+// version is overridden by goreleaser via -ldflags "-X main.version=...".
+var version = "dev"
+
 var (
 	registryURL string
 	cfgFile     string
@@ -721,7 +724,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the nap CLI version",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("nap v0.1.0-alpha (Nexus Agentic Protocol)")
+		fmt.Printf("nap %s (Nexus Agentic Protocol)\n", version)
 	},
 }
 

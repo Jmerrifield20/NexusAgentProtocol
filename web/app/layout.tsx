@@ -30,6 +30,9 @@ export default function RootLayout({
               <a href="/resolve" className="hover:text-nexus-500">
                 Resolve URI
               </a>
+              <a href="/developers" className="hover:text-nexus-500">
+                Developers
+              </a>
               <a
                 href="https://github.com/nexus-protocol/nexus"
                 className="rounded-md bg-nexus-500 px-4 py-2 text-white hover:bg-indigo-600"

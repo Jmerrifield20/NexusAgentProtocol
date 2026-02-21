@@ -44,6 +44,7 @@ services:
     environment:
       DATABASE_URL: "postgres://nexus:nexus@postgres:5432/nexus?sslmode=disable"
       REGISTRY_PORT: "8080"
+      REGISTRY_SKIP_DNS_VERIFY: "true"
       GIN_MODE: release
     ports:
       - "8080:8080"

@@ -10,6 +10,7 @@ interface Agent {
   display_name: string;
   description: string;
   endpoint: string;
+  owner_domain: string;
   status: string;
   created_at: string;
 }
@@ -18,6 +19,8 @@ export default function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [titleFilter, setTitleFilter] = useState("");
+  const [domainFilter, setDomainFilter] = useState("");
 
   useEffect(() => {
     const base = process.env.NEXT_PUBLIC_REGISTRY_URL ?? "http://localhost:8080";
@@ -31,9 +34,33 @@ export default function AgentsPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const filtered = agents.filter((a) => {
+    const matchTitle = a.display_name.toLowerCase().includes(titleFilter.toLowerCase());
+    const matchDomain = a.owner_domain?.toLowerCase().includes(domainFilter.toLowerCase()) ||
+      a.trust_root.toLowerCase().includes(domainFilter.toLowerCase());
+    return matchTitle && matchDomain;
+  });
+
   return (
     <div>
-      <h1 className="mb-8 text-3xl font-bold">Registered Agents</h1>
+      <h1 className="mb-6 text-3xl font-bold">Registered Agents</h1>
+
+      <div className="mb-4 flex gap-3">
+        <input
+          type="text"
+          placeholder="Search by title..."
+          value={titleFilter}
+          onChange={(e) => setTitleFilter(e.target.value)}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-nexus-500 focus:outline-none"
+        />
+        <input
+          type="text"
+          placeholder="Search by domain..."
+          value={domainFilter}
+          onChange={(e) => setDomainFilter(e.target.value)}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-nexus-500 focus:outline-none"
+        />
+      </div>
 
       {loading && <p className="text-gray-500">Loading agents...</p>}
       {error && (
@@ -46,54 +73,38 @@ export default function AgentsPage() {
         <p className="text-gray-500">No agents registered yet.</p>
       )}
 
-      <div className="grid gap-4">
-        {agents.map((agent) => (
-          <div
-            key={agent.id}
-            className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm"
-          >
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="font-semibold text-lg">{agent.display_name}</h3>
-                <code className="mt-1 block text-sm text-nexus-500 font-mono">
-                  agent://{agent.trust_root}/{agent.capability_node}/
-                  {agent.agent_id}
+      {!loading && !error && agents.length > 0 && filtered.length === 0 && (
+        <p className="text-gray-500">No agents match your search.</p>
+      )}
+
+      <div className="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white shadow-sm">
+        {filtered.map((agent) => (
+          <div key={agent.id} className="flex items-center justify-between px-4 py-3 gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-sm text-gray-900">{agent.display_name}</span>
+                <code className="text-xs text-nexus-500 font-mono truncate">
+                  agent://{agent.trust_root}/{agent.capability_node}/{agent.agent_id}
                 </code>
-                {agent.description && (
-                  <p className="mt-2 text-sm text-gray-500">
-                    {agent.description}
-                  </p>
-                )}
               </div>
-              <span
-                className={`rounded-full px-3 py-1 text-xs font-medium ${
-                  agent.status === "active"
-                    ? "bg-green-100 text-green-700"
-                    : agent.status === "pending"
-                    ? "bg-yellow-100 text-yellow-700"
-                    : "bg-red-100 text-red-700"
-                }`}
-              >
-                {agent.status}
-              </span>
-            </div>
-            <div className="mt-4 flex items-center gap-6 text-sm text-gray-400">
-              <span>
-                Endpoint:{" "}
-                <a
-                  href={agent.endpoint}
-                  className="text-nexus-500 hover:underline"
-                  target="_blank"
-                  rel="noreferrer"
-                >
+              <div className="mt-0.5 flex items-center gap-3 text-xs text-gray-400">
+                <a href={agent.endpoint} className="hover:underline truncate" target="_blank" rel="noreferrer">
                   {agent.endpoint}
                 </a>
-              </span>
-              <span>
-                Registered:{" "}
-                {new Date(agent.created_at).toLocaleDateString()}
-              </span>
+                <span>{new Date(agent.created_at).toLocaleDateString()}</span>
+              </div>
             </div>
+            <span
+              className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                agent.status === "active"
+                  ? "bg-green-100 text-green-700"
+                  : agent.status === "pending"
+                  ? "bg-yellow-100 text-yellow-700"
+                  : "bg-red-100 text-red-700"
+              }`}
+            >
+              {agent.status}
+            </span>
           </div>
         ))}
       </div>

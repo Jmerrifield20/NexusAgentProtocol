@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/nexus-protocol/nexus/internal/identity"
 	"github.com/nexus-protocol/nexus/internal/registry/model"
-	"github.com/nexus-protocol/nexus/internal/registry/repository"
 	"github.com/nexus-protocol/nexus/internal/trustledger"
 	"go.uber.org/zap"
 )
@@ -40,6 +39,20 @@ type ActivationResult struct {
 	CAPEM string
 }
 
+// agentRepo is the persistence interface for the agent service.
+// *repository.AgentRepository satisfies this interface.
+type agentRepo interface {
+	Create(ctx context.Context, agent *model.Agent) error
+	GetByID(ctx context.Context, id uuid.UUID) (*model.Agent, error)
+	GetByAgentID(ctx context.Context, trustRoot, capNode, agentID string) (*model.Agent, error)
+	List(ctx context.Context, trustRoot, capNode string, limit, offset int) ([]*model.Agent, error)
+	ListByOwnerDomain(ctx context.Context, domain string, limit, offset int) ([]*model.Agent, error)
+	Update(ctx context.Context, agent *model.Agent) error
+	UpdateStatus(ctx context.Context, id uuid.UUID, status model.AgentStatus) error
+	ActivateWithCert(ctx context.Context, id uuid.UUID, serial, certPEM string) error
+	Delete(ctx context.Context, id uuid.UUID) error
+}
+
 // DomainVerifier checks whether a domain has completed DNS-01 verification.
 // *DNSChallengeService satisfies this interface.
 type DomainVerifier interface {
@@ -48,7 +61,7 @@ type DomainVerifier interface {
 
 // AgentService contains business logic for agent lifecycle management.
 type AgentService struct {
-	repo        *repository.AgentRepository
+	repo        agentRepo
 	issuer      *identity.Issuer   // nil = no cert issuance
 	ledger      trustledger.Ledger // nil = no ledger writes
 	dnsVerifier DomainVerifier     // nil = skip domain verification gate
@@ -57,7 +70,7 @@ type AgentService struct {
 
 // NewAgentService creates a new AgentService.
 // issuer, ledger, and dnsVerifier may each be nil to disable that feature.
-func NewAgentService(repo *repository.AgentRepository, issuer *identity.Issuer, ledger trustledger.Ledger, dnsVerifier DomainVerifier, logger *zap.Logger) *AgentService {
+func NewAgentService(repo agentRepo, issuer *identity.Issuer, ledger trustledger.Ledger, dnsVerifier DomainVerifier, logger *zap.Logger) *AgentService {
 	return &AgentService{repo: repo, issuer: issuer, ledger: ledger, dnsVerifier: dnsVerifier, logger: logger}
 }
 
@@ -86,7 +99,7 @@ func (s *AgentService) Register(ctx context.Context, req *model.RegisterRequest)
 	capNode := normalizeCapabilityNode(req.CapabilityNode)
 
 	agent := &model.Agent{
-		TrustRoot:      req.TrustRoot,
+		TrustRoot:      req.OwnerDomain,
 		CapabilityNode: capNode,
 		AgentID:        agentID,
 		DisplayName:    req.DisplayName,
