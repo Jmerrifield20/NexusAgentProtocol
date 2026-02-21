@@ -70,6 +70,10 @@ func (s *stubChallengeStore) FindVerifiedByDomain(_ context.Context, domain stri
 	return nil, repository.ErrChallengeNotFound
 }
 
+func (s *stubChallengeStore) DeleteExpired(_ context.Context) (int64, error) {
+	return 0, nil
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 func newDNSSvc(store *stubChallengeStore, vfn func(context.Context, *internaldns.Challenge) error) *service.DNSChallengeService {

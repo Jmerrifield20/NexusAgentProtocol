@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base32"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/nexus-protocol/nexus/internal/identity"
 	"github.com/nexus-protocol/nexus/internal/registry/model"
 	"github.com/nexus-protocol/nexus/internal/trustledger"
+	"github.com/nexus-protocol/nexus/pkg/agentcard"
 	"go.uber.org/zap"
 )
 
@@ -37,6 +39,18 @@ type ActivationResult struct {
 	// CAPEM is the CA certificate in PEM format.
 	// Clients use this to configure their TLS trust store.
 	CAPEM string
+
+	// AgentCardJSON is a ready-to-deploy A2A-compatible agent card JSON string
+	// with embedded NAP endorsement. Deploy at /.well-known/agent.json on the
+	// agent's own domain for A2A client discovery.
+	// Non-empty only when a TokenIssuer is configured on the service.
+	AgentCardJSON string
+}
+
+// FreeTierConfig holds configuration for the NAP-hosted free tier.
+type FreeTierConfig struct {
+	TrustRoot string // e.g. "nexusagentprotocol.com"
+	MaxAgents int    // maximum agents per free-tier user (e.g. 3)
 }
 
 // agentRepo is the persistence interface for the agent service.
@@ -47,6 +61,9 @@ type agentRepo interface {
 	GetByAgentID(ctx context.Context, trustRoot, capNode, agentID string) (*model.Agent, error)
 	List(ctx context.Context, trustRoot, capNode string, limit, offset int) ([]*model.Agent, error)
 	ListByOwnerDomain(ctx context.Context, domain string, limit, offset int) ([]*model.Agent, error)
+	ListByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID, limit, offset int) ([]*model.Agent, error)
+	SearchByDomain(ctx context.Context, domain string, limit, offset int) ([]*model.Agent, error)
+	CountByOwner(ctx context.Context, ownerUserID uuid.UUID) (int, error)
 	Update(ctx context.Context, agent *model.Agent) error
 	UpdateStatus(ctx context.Context, id uuid.UUID, status model.AgentStatus) error
 	ActivateWithCert(ctx context.Context, id uuid.UUID, serial, certPEM string) error
@@ -59,23 +76,60 @@ type DomainVerifier interface {
 	IsDomainVerified(ctx context.Context, domain string) (bool, error)
 }
 
+// UserEmailChecker verifies whether a user's email address has been confirmed.
+// *users.UserService satisfies this interface.
+type UserEmailChecker interface {
+	IsEmailVerified(ctx context.Context, userID uuid.UUID) (bool, error)
+}
+
 // AgentService contains business logic for agent lifecycle management.
 type AgentService struct {
-	repo        agentRepo
-	issuer      *identity.Issuer   // nil = no cert issuance
-	ledger      trustledger.Ledger // nil = no ledger writes
-	dnsVerifier DomainVerifier     // nil = skip domain verification gate
-	logger      *zap.Logger
+	repo         agentRepo
+	issuer       *identity.Issuer      // nil = no cert issuance
+	tokens       *identity.TokenIssuer // nil = no endorsement JWT generation
+	ledger       trustledger.Ledger    // nil = no ledger writes
+	dnsVerifier  DomainVerifier        // nil = skip domain verification gate
+	emailChecker UserEmailChecker      // nil = skip email verification gate
+	freeTier     FreeTierConfig
+	registryURL  string // base URL of this registry, used in endorsement JWTs
+	logger       *zap.Logger
 }
 
 // NewAgentService creates a new AgentService.
 // issuer, ledger, and dnsVerifier may each be nil to disable that feature.
 func NewAgentService(repo agentRepo, issuer *identity.Issuer, ledger trustledger.Ledger, dnsVerifier DomainVerifier, logger *zap.Logger) *AgentService {
-	return &AgentService{repo: repo, issuer: issuer, ledger: ledger, dnsVerifier: dnsVerifier, logger: logger}
+	return &AgentService{
+		repo:        repo,
+		issuer:      issuer,
+		ledger:      ledger,
+		dnsVerifier: dnsVerifier,
+		freeTier:    FreeTierConfig{TrustRoot: "nexusagentprotocol.com", MaxAgents: 3},
+		logger:      logger,
+	}
+}
+
+// SetEmailChecker configures the email verification checker used for nap_hosted activation.
+func (s *AgentService) SetEmailChecker(ec UserEmailChecker) {
+	s.emailChecker = ec
+}
+
+// SetFreeTierConfig replaces the free-tier quota/trust-root configuration.
+func (s *AgentService) SetFreeTierConfig(cfg FreeTierConfig) {
+	s.freeTier = cfg
+}
+
+// SetTokenIssuer configures the JWT token issuer used to sign agent endorsements.
+// When set, Activate() includes a signed A2A card in the ActivationResult.
+func (s *AgentService) SetTokenIssuer(t *identity.TokenIssuer) {
+	s.tokens = t
+}
+
+// SetRegistryURL sets the base URL of this registry for use in endorsement JWTs.
+func (s *AgentService) SetRegistryURL(url string) {
+	s.registryURL = url
 }
 
 // appendLedger appends an audit entry to the ledger in a non-fatal manner.
-// If the ledger is nil or the append fails, the error is only logged.
 func (s *AgentService) appendLedger(ctx context.Context, agentURI, action, actor string, payload any) {
 	if s.ledger == nil {
 		return
@@ -96,19 +150,84 @@ func (s *AgentService) Register(ctx context.Context, req *model.RegisterRequest)
 		return nil, fmt.Errorf("generate agent ID: %w", err)
 	}
 
-	capNode := normalizeCapabilityNode(req.CapabilityNode)
+	var agent *model.Agent
 
-	agent := &model.Agent{
-		TrustRoot:      req.OwnerDomain,
-		CapabilityNode: capNode,
-		AgentID:        agentID,
-		DisplayName:    req.DisplayName,
-		Description:    req.Description,
-		Endpoint:       req.Endpoint,
-		OwnerDomain:    req.OwnerDomain,
-		Status:         model.AgentStatusPending,
-		PublicKeyPEM:   req.PublicKeyPEM,
-		Metadata:       req.Metadata,
+	if req.RegistrationType == model.RegistrationTypeNAPHosted {
+		// NAP-hosted free tier: enforce trust root, namespace, and quota.
+		if req.OwnerUserID == nil {
+			return nil, fmt.Errorf("owner_user_id is required for nap_hosted registration")
+		}
+		if req.Username == "" {
+			return nil, fmt.Errorf("username is required for nap_hosted registration")
+		}
+
+		count, err := s.repo.CountByOwner(ctx, *req.OwnerUserID)
+		if err != nil {
+			return nil, fmt.Errorf("check agent quota: %w", err)
+		}
+		max := s.freeTier.MaxAgents
+		if max <= 0 {
+			max = 3
+		}
+		if count >= max {
+			return nil, fmt.Errorf("free tier limit of %d agents reached", max)
+		}
+
+		trustRoot := s.freeTier.TrustRoot
+		if trustRoot == "" {
+			trustRoot = "nexusagentprotocol.com"
+		}
+		capNode := "hosted/" + req.Username
+
+		// We own the nexusagentprotocol.com namespace, so we assign the
+		// endpoint — the user doesn't provide one.
+		base := s.registryURL
+		if base == "" {
+			base = "https://nexusagentprotocol.com"
+		}
+		endpoint := base + "/hosted/" + req.Username + "/" + agentID
+
+		agent = &model.Agent{
+			TrustRoot:        trustRoot,
+			CapabilityNode:   capNode,
+			AgentID:          agentID,
+			DisplayName:      req.DisplayName,
+			Description:      req.Description,
+			Endpoint:         endpoint,
+			Status:           model.AgentStatusPending,
+			PublicKeyPEM:     req.PublicKeyPEM,
+			Metadata:         req.Metadata,
+			OwnerUserID:      req.OwnerUserID,
+			RegistrationType: model.RegistrationTypeNAPHosted,
+		}
+	} else {
+		// Domain-verified path.
+		if req.TrustRoot == "" {
+			return nil, fmt.Errorf("trust_root is required for domain registration")
+		}
+		if req.CapabilityNode == "" {
+			return nil, fmt.Errorf("capability_node is required for domain registration")
+		}
+		if req.Endpoint == "" {
+			return nil, fmt.Errorf("endpoint is required for domain registration")
+		}
+
+		capNode := normalizeCapabilityNode(req.CapabilityNode)
+
+		agent = &model.Agent{
+			TrustRoot:        req.TrustRoot,
+			CapabilityNode:   capNode,
+			AgentID:          agentID,
+			DisplayName:      req.DisplayName,
+			Description:      req.Description,
+			Endpoint:         req.Endpoint,
+			OwnerDomain:      req.OwnerDomain,
+			Status:           model.AgentStatusPending,
+			PublicKeyPEM:     req.PublicKeyPEM,
+			Metadata:         req.Metadata,
+			OwnerUserID:      req.OwnerUserID,
+			RegistrationType: model.RegistrationTypeDomain,
+		}
 	}
 
 	if err := s.repo.Create(ctx, agent); err != nil {
@@ -118,16 +237,21 @@ func (s *AgentService) Register(ctx context.Context, req *model.RegisterRequest)
 
 	s.logger.Info("agent registered",
 		zap.String("agent_id", agentID),
-		zap.String("trust_root", req.TrustRoot),
-		zap.String("capability_node", capNode),
+		zap.String("trust_root", agent.TrustRoot),
+		zap.String("capability_node", agent.CapabilityNode),
+		zap.String("registration_type", agent.RegistrationType),
 	)
 
-	s.appendLedger(ctx, agent.URI(), "register", req.OwnerDomain, map[string]string{
-		"trust_root":      agent.TrustRoot,
-		"capability_node": agent.CapabilityNode,
-		"agent_id":        agent.AgentID,
-		"owner_domain":    agent.OwnerDomain,
-		"endpoint":        agent.Endpoint,
+	actor := agent.OwnerDomain
+	if actor == "" && req.OwnerUserID != nil {
+		actor = req.OwnerUserID.String()
+	}
+	s.appendLedger(ctx, agent.URI(), "register", actor, map[string]string{
+		"trust_root":        agent.TrustRoot,
+		"capability_node":   agent.CapabilityNode,
+		"agent_id":          agent.AgentID,
+		"registration_type": agent.RegistrationType,
+		"endpoint":          agent.Endpoint,
 	})
 
 	return agent, nil
@@ -194,23 +318,35 @@ func (s *AgentService) Update(ctx context.Context, id uuid.UUID, req *model.Upda
 // Activate transitions an agent from pending to active and, if an Issuer is
 // configured, issues an X.509 agent identity certificate signed by the Nexus CA.
 //
-// The returned ActivationResult.KeyPEM contains the private key exactly once —
-// it is not persisted anywhere. The caller must deliver it to the agent owner
-// and instruct them to store it securely.
+// For domain agents, DNS-01 verification is required (when dnsVerifier is set).
+// For nap_hosted agents, email verification is required (when emailChecker is set).
 func (s *AgentService) Activate(ctx context.Context, id uuid.UUID) (*ActivationResult, error) {
 	agent, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 
-	// Gate activation on DNS-01 domain verification when a verifier is configured.
-	if s.dnsVerifier != nil {
-		verified, err := s.dnsVerifier.IsDomainVerified(ctx, agent.OwnerDomain)
-		if err != nil {
-			return nil, fmt.Errorf("check domain verification: %w", err)
+	if agent.RegistrationType == model.RegistrationTypeNAPHosted {
+		// Gate activation on email verification for hosted agents.
+		if s.emailChecker != nil && agent.OwnerUserID != nil {
+			verified, err := s.emailChecker.IsEmailVerified(ctx, *agent.OwnerUserID)
+			if err != nil {
+				return nil, fmt.Errorf("check email verification: %w", err)
+			}
+			if !verified {
+				return nil, fmt.Errorf("email address must be verified before activating a hosted agent")
+			}
 		}
-		if !verified {
-			return nil, fmt.Errorf("domain %q ownership not verified; complete DNS-01 challenge first", agent.OwnerDomain)
+	} else {
+		// Gate activation on DNS-01 domain verification for domain agents.
+		if s.dnsVerifier != nil {
+			verified, err := s.dnsVerifier.IsDomainVerified(ctx, agent.OwnerDomain)
+			if err != nil {
+				return nil, fmt.Errorf("check domain verification: %w", err)
+			}
+			if !verified {
+				return nil, fmt.Errorf("domain %q ownership not verified; complete DNS-01 challenge first", agent.OwnerDomain)
+			}
 		}
 	}
 
@@ -248,6 +384,13 @@ func (s *AgentService) Activate(ctx context.Context, id uuid.UUID) (*ActivationR
 		zap.Bool("cert_issued", result.CertPEM != ""),
 	)
 
+	// Generate A2A-compatible agent card with NAP endorsement (non-fatal).
+	if cardJSON, err := s.generateAgentCard(agent, result.Serial); err != nil {
+		s.logger.Warn("generate agent card (non-fatal)", zap.Error(err))
+	} else {
+		result.AgentCardJSON = cardJSON
+	}
+
 	s.appendLedger(ctx, agent.URI(), "activate", "nexus-system", map[string]string{
 		"agent_id":    agent.AgentID,
 		"cert_serial": result.Serial,
@@ -279,6 +422,18 @@ func (s *AgentService) ListByOwnerDomain(ctx context.Context, ownerDomain string
 	return s.repo.ListByOwnerDomain(ctx, ownerDomain, limit, offset)
 }
 
+// ListByOwnerUserID returns all agents owned by the given user account.
+func (s *AgentService) ListByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID, limit, offset int) ([]*model.Agent, error) {
+	return s.repo.ListByOwnerUserID(ctx, ownerUserID, limit, offset)
+}
+
+// LookupByDomain returns active, domain-verified agents registered under the
+// given trust root domain. This is the primary discovery path: a caller
+// supplies a domain name and gets back all the verified agents it hosts.
+func (s *AgentService) LookupByDomain(ctx context.Context, domain string, limit, offset int) ([]*model.Agent, error) {
+	return s.repo.SearchByDomain(ctx, domain, limit, offset)
+}
+
 // Delete permanently removes an agent record.
 func (s *AgentService) Delete(ctx context.Context, id uuid.UUID) error {
 	return s.repo.Delete(ctx, id)
@@ -286,7 +441,6 @@ func (s *AgentService) Delete(ctx context.Context, id uuid.UUID) error {
 
 // generateAgentID produces a unique, sortable Base32 agent identifier.
 func generateAgentID() (string, error) {
-	// 10 random bytes + 8-byte millisecond timestamp prefix = sortable & unique
 	buf := make([]byte, 10)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
@@ -305,4 +459,46 @@ func generateAgentID() (string, error) {
 // normalizeCapabilityNode removes leading/trailing slashes and lowercases.
 func normalizeCapabilityNode(cap string) string {
 	return strings.ToLower(strings.Trim(cap, "/"))
+}
+
+// generateAgentCard builds and returns a JSON-encoded A2A-compatible agent card
+// with a NAP endorsement JWT signed by the registry CA key.
+// Returns an empty string (no error) when no token issuer is configured.
+func (s *AgentService) generateAgentCard(agent *model.Agent, certSerial string) (string, error) {
+	if s.tokens == nil {
+		return "", nil
+	}
+
+	registry := s.registryURL
+	if registry == "" {
+		registry = "https://registry.nexusagentprotocol.com"
+	}
+
+	tier := agent.ComputeTrustTier()
+
+	endorsement, err := s.tokens.IssueEndorsement(
+		agent.URI(), string(tier), certSerial, registry, 365*24*time.Hour,
+	)
+	if err != nil {
+		return "", fmt.Errorf("issue endorsement: %w", err)
+	}
+
+	card := agentcard.A2ACard{
+		Name:         agent.DisplayName,
+		Description:  agent.Description,
+		URL:          agent.Endpoint,
+		Version:      "1.0",
+		Capabilities: agentcard.A2ACapabilities{},
+		NAPURI:       agent.URI(),
+		NAPTrustTier: string(tier),
+		NAPRegistry:  registry,
+		NAPCertSerial: certSerial,
+		NAPEndorsement: endorsement,
+	}
+
+	data, err := json.MarshalIndent(card, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal agent card: %w", err)
+	}
+	return string(data), nil
 }

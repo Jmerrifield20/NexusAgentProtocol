@@ -76,6 +76,10 @@ func (s *stubChallengeStore) FindVerifiedByDomain(_ context.Context, domain stri
 	return nil, repository.ErrChallengeNotFound
 }
 
+func (s *stubChallengeStore) DeleteExpired(_ context.Context) (int64, error) {
+	return 0, nil
+}
+
 func setupDNSRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)

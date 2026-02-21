@@ -167,6 +167,44 @@ func (s *stubAgentRepo) Delete(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (s *stubAgentRepo) ListByOwnerUserID(_ context.Context, ownerUserID uuid.UUID, limit, offset int) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if a.OwnerUserID != nil && *a.OwnerUserID == ownerUserID {
+			cp := *a
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (s *stubAgentRepo) SearchByDomain(_ context.Context, domain string, limit, offset int) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if a.TrustRoot == domain && a.Status == model.AgentStatusActive && a.RegistrationType == model.RegistrationTypeDomain {
+			cp := *a
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (s *stubAgentRepo) CountByOwner(_ context.Context, ownerUserID uuid.UUID) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, a := range s.rows {
+		if a.OwnerUserID != nil && *a.OwnerUserID == ownerUserID && a.Status != "revoked" {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 func testCA(t *testing.T) *identity.CAManager {
@@ -200,7 +238,7 @@ func setupTestRouter(t *testing.T, repo *stubAgentRepo, withAuth bool) (*gin.Eng
 func registerAgent(t *testing.T, router *gin.Engine) map[string]any {
 	t.Helper()
 	body := `{
-		"trust_root":"nexus.io",
+		"trust_root":"nexusagentprotocol.com",
 		"capability_node":"finance/taxes",
 		"display_name":"Tax Agent",
 		"endpoint":"https://tax.example.com",
@@ -225,7 +263,7 @@ func TestCreateAgent_201(t *testing.T) {
 	router, _, _ := setupTestRouter(t, repo, false)
 
 	body := `{
-		"trust_root":"nexus.io",
+		"trust_root":"nexusagentprotocol.com",
 		"capability_node":"finance/taxes",
 		"display_name":"Tax Agent",
 		"endpoint":"https://tax.example.com",
@@ -349,24 +387,19 @@ func TestGetAgent_400_badUUID(t *testing.T) {
 
 func TestUpdateAgent_200(t *testing.T) {
 	repo := newStubAgentRepo()
-	router, _, _ := setupTestRouter(t, repo, false)
+	router, _, _ := setupTestRouter(t, repo, false) // no auth = dev mode
 
 	created := registerAgent(t, router)
 	id := created["id"].(string)
 
-	body := `{"display_name":"Updated Name"}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/agents/"+id, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := patchAgent(t, router, id, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var resp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["display_name"] != "Updated Name" {
+	if resp["display_name"] != "Patched Name" {
 		t.Errorf("name not updated: %v", resp["display_name"])
 	}
 }
@@ -565,7 +598,7 @@ func TestResolveAgent_200(t *testing.T) {
 
 	agent, _ := svc.Get(context.Background(), uid)
 
-	url := "/api/v1/resolve?trust_root=nexus.io&capability_node=finance/taxes&agent_id=" + agent.AgentID
+	url := "/api/v1/resolve?trust_root=nexusagentprotocol.com&capability_node=finance/taxes&agent_id=" + agent.AgentID
 	req := httptest.NewRequest(http.MethodGet, url, nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -578,12 +611,186 @@ func TestResolveAgent_200(t *testing.T) {
 func TestResolveAgent_400_missingParams(t *testing.T) {
 	router, _, _ := setupTestRouter(t, newStubAgentRepo(), false)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/resolve?trust_root=nexus.io", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/resolve?trust_root=nexusagentprotocol.com", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+// ── UpdateAgent auth tests ────────────────────────────────────────────────
+
+// setupTestRouterFull wires both agent task tokens and user JWTs.
+func setupTestRouterFull(t *testing.T, repo *stubAgentRepo) (
+	router *gin.Engine,
+	svc *service.AgentService,
+	tokens *identity.TokenIssuer,
+	userTokens *identity.UserTokenIssuer,
+) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	svc = service.NewAgentService(repo, nil, nil, nil, zap.NewNop())
+	ca := testCA(t)
+	tokens = identity.NewTokenIssuer(ca.Key(), "http://test", time.Hour)
+	userTokens = identity.NewUserTokenIssuer(ca.Key(), "http://test", time.Hour)
+	h := handler.NewAgentHandler(svc, tokens, zap.NewNop())
+	h.SetUserTokenIssuer(userTokens)
+	v1 := r.Group("/api/v1")
+	h.Register(v1)
+	router = r
+	return
+}
+
+// registerHostedAgent creates a nap_hosted agent owned by the given user UUID.
+func registerHostedAgent(t *testing.T, repo *stubAgentRepo, ownerID uuid.UUID) *model.Agent {
+	t.Helper()
+	uid := ownerID
+	a := &model.Agent{
+		TrustRoot:        "nexusagentprotocol.com",
+		CapabilityNode:   "hosted/testuser",
+		AgentID:          "agent_" + ownerID.String()[:8],
+		DisplayName:      "Test Hosted Agent",
+		Endpoint:         "https://agent.example.com",
+		OwnerDomain:      "nexusagentprotocol.com",
+		Status:           model.AgentStatusActive,
+		OwnerUserID:      &uid,
+		RegistrationType: model.RegistrationTypeNAPHosted,
+	}
+	if err := repo.Create(context.Background(), a); err != nil {
+		t.Fatalf("registerHostedAgent: %v", err)
+	}
+	return a
+}
+
+func patchAgent(t *testing.T, router *gin.Engine, id, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := `{"display_name":"Patched Name"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/agents/"+id, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w
+}
+
+// TestUpdateAgent_200_noAuth verifies the existing dev-mode behaviour is preserved:
+// when no token issuer is configured, unauthenticated updates still succeed.
+func TestUpdateAgent_200_noAuth(t *testing.T) {
+	repo := newStubAgentRepo()
+	router, _, _ := setupTestRouter(t, repo, false) // no auth configured
+
+	created := registerAgent(t, router)
+	w := patchAgent(t, router, created["id"].(string), "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("dev-mode: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestUpdateAgent_401_noToken confirms anonymous requests are rejected once auth is on.
+func TestUpdateAgent_401_noToken(t *testing.T) {
+	repo := newStubAgentRepo()
+	router, _, _ := setupTestRouter(t, repo, true) // auth enabled
+
+	created := registerAgent(t, router)
+	w := patchAgent(t, router, created["id"].(string), "")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestUpdateAgent_200_agentToken confirms the owning agent's task token is accepted.
+func TestUpdateAgent_200_agentToken(t *testing.T) {
+	repo := newStubAgentRepo()
+	router, svc, tokens, _ := setupTestRouterFull(t, repo)
+
+	created := registerAgent(t, router)
+	id := created["id"].(string)
+	uid, _ := uuid.Parse(id)
+	svc.Activate(context.Background(), uid)
+	agent, _ := svc.Get(context.Background(), uid)
+
+	tok, _ := tokens.Issue(agent.URI(), nil)
+	w := patchAgent(t, router, id, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with own token, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestUpdateAgent_403_wrongAgentToken confirms a token for a different agent is rejected.
+func TestUpdateAgent_403_wrongAgentToken(t *testing.T) {
+	repo := newStubAgentRepo()
+	router, _, tokens, _ := setupTestRouterFull(t, repo)
+
+	created := registerAgent(t, router)
+	tok, _ := tokens.Issue("agent://other.io/cap/agent_other", nil)
+	w := patchAgent(t, router, created["id"].(string), tok)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestUpdateAgent_200_adminScope confirms a nexus:admin scoped token can update any agent.
+func TestUpdateAgent_200_adminScope(t *testing.T) {
+	repo := newStubAgentRepo()
+	router, _, tokens, _ := setupTestRouterFull(t, repo)
+
+	created := registerAgent(t, router)
+	tok, _ := tokens.Issue("agent://admin.io/system/admin_1", []string{"nexus:admin"})
+	w := patchAgent(t, router, created["id"].(string), tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with admin scope, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestUpdateAgent_200_userOwnsAgent confirms a user JWT is accepted for their own hosted agent.
+func TestUpdateAgent_200_userOwnsAgent(t *testing.T) {
+	repo := newStubAgentRepo()
+	router, _, _, userTokens := setupTestRouterFull(t, repo)
+
+	ownerID := uuid.New()
+	agent := registerHostedAgent(t, repo, ownerID)
+
+	tok, _ := userTokens.Issue(ownerID.String(), "user@example.com", "testuser", "free")
+	w := patchAgent(t, router, agent.ID.String(), tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for owner, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestUpdateAgent_403_userJWT_wrongOwner confirms a user JWT for a different user is rejected.
+func TestUpdateAgent_403_userJWT_wrongOwner(t *testing.T) {
+	repo := newStubAgentRepo()
+	router, _, _, userTokens := setupTestRouterFull(t, repo)
+
+	ownerID := uuid.New()
+	agent := registerHostedAgent(t, repo, ownerID)
+
+	// Token for a completely different user
+	differentUserID := uuid.New()
+	tok, _ := userTokens.Issue(differentUserID.String(), "other@example.com", "other", "free")
+	w := patchAgent(t, router, agent.ID.String(), tok)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for wrong owner, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestUpdateAgent_403_userJWT_domainAgent confirms a user JWT cannot update a domain-verified
+// agent (which has no owner_user_id) — the agent's own task token is required for those.
+func TestUpdateAgent_403_userJWT_domainAgent(t *testing.T) {
+	repo := newStubAgentRepo()
+	router, _, _, userTokens := setupTestRouterFull(t, repo)
+
+	// Domain agent: registered without an owner_user_id (the normal domain path)
+	created := registerAgent(t, router)
+	tok, _ := userTokens.Issue(uuid.New().String(), "anyone@example.com", "anyone", "free")
+	w := patchAgent(t, router, created["id"].(string), tok)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for user JWT on domain agent, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

@@ -38,15 +38,22 @@ func (r *AgentRepository) Create(ctx context.Context, agent *model.Agent) error 
 	agent.CreatedAt = now
 	agent.UpdatedAt = now
 
+	if agent.RegistrationType == "" {
+		agent.RegistrationType = model.RegistrationTypeDomain
+	}
+	agent.TrustTier = agent.ComputeTrustTier()
+
 	query := `
 		INSERT INTO agents (
 			id, trust_root, capability_node, agent_id, display_name,
 			description, endpoint, owner_domain, status, cert_serial,
-			public_key_pem, metadata, created_at, updated_at, expires_at
+			public_key_pem, metadata, created_at, updated_at, expires_at,
+			owner_user_id, registration_type
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9, $10,
-			$11, $12, $13, $14, $15
+			$11, $12, $13, $14, $15,
+			$16, $17
 		)`
 
 	_, err = r.db.Exec(ctx, query,
@@ -54,6 +61,7 @@ func (r *AgentRepository) Create(ctx context.Context, agent *model.Agent) error 
 		agent.DisplayName, agent.Description, agent.Endpoint, agent.OwnerDomain,
 		agent.Status, agent.CertSerial, agent.PublicKeyPEM, meta,
 		agent.CreatedAt, agent.UpdatedAt, agent.ExpiresAt,
+		agent.OwnerUserID, agent.RegistrationType,
 	)
 	return err
 }
@@ -128,6 +136,75 @@ func (r *AgentRepository) ListByOwnerDomain(ctx context.Context, ownerDomain str
 	return agents, rows.Err()
 }
 
+// SearchByDomain returns active, domain-verified agents whose trust_root matches
+// the given domain. This is the canonical lookup for "what agents does acme.com have?"
+func (r *AgentRepository) SearchByDomain(ctx context.Context, domain string, limit, offset int) ([]*model.Agent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := `
+		SELECT * FROM agents
+		WHERE trust_root = $1
+		  AND status = 'active'
+		  AND registration_type = 'domain'
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3`
+
+	rows, err := r.db.Query(ctx, query, domain, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var agents []*model.Agent
+	for rows.Next() {
+		a, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
+// ListByOwnerUserID returns all agents owned by a specific user, newest first.
+func (r *AgentRepository) ListByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID, limit, offset int) ([]*model.Agent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := `
+		SELECT * FROM agents
+		WHERE owner_user_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3`
+
+	rows, err := r.db.Query(ctx, query, ownerUserID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var agents []*model.Agent
+	for rows.Next() {
+		a, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
+// CountByOwner returns the number of non-revoked agents owned by a user.
+func (r *AgentRepository) CountByOwner(ctx context.Context, ownerUserID uuid.UUID) (int, error) {
+	var count int
+	q := `SELECT COUNT(*) FROM agents WHERE owner_user_id = $1 AND status != 'revoked'`
+	if err := r.db.QueryRow(ctx, q, ownerUserID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count by owner: %w", err)
+	}
+	return count, nil
+}
+
 // Update modifies an existing agent record.
 func (r *AgentRepository) Update(ctx context.Context, agent *model.Agent) error {
 	meta, err := json.Marshal(agent.Metadata)
@@ -173,7 +250,7 @@ func (r *AgentRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status
 }
 
 // ActivateWithCert atomically sets status=active and stores the issued certificate
-// serial and PEM on the agent record. Called after the Issuer signs the agent cert.
+// serial and PEM on the agent record.
 func (r *AgentRepository) ActivateWithCert(ctx context.Context, id uuid.UUID, certSerial, certPEM string) error {
 	query := `
 		UPDATE agents SET
@@ -223,6 +300,8 @@ func (r *AgentRepository) scanOne(ctx context.Context, query string, args ...any
 }
 
 // scan reads a single agent from a pgx.Rows cursor.
+// Column order matches the agents table definition including the two ALTER TABLE columns
+// (owner_user_id, registration_type) appended at the end.
 func (r *AgentRepository) scan(rows pgx.Rows) (*model.Agent, error) {
 	var a model.Agent
 	var metaRaw []byte
@@ -232,6 +311,7 @@ func (r *AgentRepository) scan(rows pgx.Rows) (*model.Agent, error) {
 		&a.DisplayName, &a.Description, &a.Endpoint, &a.OwnerDomain,
 		&a.Status, &a.CertSerial, &a.PublicKeyPEM, &metaRaw,
 		&a.CreatedAt, &a.UpdatedAt, &a.ExpiresAt,
+		&a.OwnerUserID, &a.RegistrationType,
 	)
 	if err != nil {
 		return nil, err
@@ -241,5 +321,6 @@ func (r *AgentRepository) scan(rows pgx.Rows) (*model.Agent, error) {
 			return nil, fmt.Errorf("unmarshal metadata: %w", err)
 		}
 	}
+	a.TrustTier = a.ComputeTrustTier()
 	return &a, nil
 }

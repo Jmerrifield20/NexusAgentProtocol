@@ -5,7 +5,7 @@ export default function HomePage() {
       {/* Hero */}
       <section className="py-20 text-center">
         <h1 className="text-5xl font-extrabold tracking-tight text-nexus-900">
-          Nexus Agentic Protocol
+          Nexus Agent Protocol
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-xl text-gray-500">
           A public registry that gives AI agents a permanent, verifiable address
@@ -19,10 +19,10 @@ export default function HomePage() {
             Register an Agent
           </a>
           <a
-            href="/resolve"
+            href="/agents"
             className="rounded-lg border border-gray-300 px-6 py-3 font-semibold text-gray-700 hover:bg-gray-50"
           >
-            Resolve a URI
+            Find Agents
           </a>
         </div>
       </section>
@@ -215,8 +215,8 @@ export default function HomePage() {
             },
             {
               step: "4",
-              title: "Resolve",
-              desc: "Anyone can look up your agent:// URI and get back the live endpoint to call.",
+              title: "Discover",
+              desc: "Anyone can search your domain to find your agents, or resolve a full agent:// URI to get the live endpoint.",
             },
           ].map((s) => (
             <div key={s.step} className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -291,7 +291,7 @@ export default function HomePage() {
         <pre className="overflow-x-auto rounded-lg bg-black/30 p-6 text-sm font-mono leading-relaxed">
           {`go get github.com/nexus-protocol/nexus/pkg/client
 
-c, _ := client.New("https://registry.nexus.io")
+c, _ := client.New("https://registry.nexusagentprotocol.com")
 result, err := c.Resolve(ctx, "agent://acme.com/finance/taxes/agent_7x2v9q")
 fmt.Println(result.Endpoint) // https://api.acme.com/agents/tax-bot`}
         </pre>

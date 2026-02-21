@@ -159,6 +159,44 @@ func (s *stubAgentRepo) Delete(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (s *stubAgentRepo) ListByOwnerUserID(_ context.Context, ownerUserID uuid.UUID, limit, offset int) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if a.OwnerUserID != nil && *a.OwnerUserID == ownerUserID {
+			cp := *a
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (s *stubAgentRepo) SearchByDomain(_ context.Context, domain string, limit, offset int) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if a.TrustRoot == domain && a.Status == model.AgentStatusActive && a.RegistrationType == model.RegistrationTypeDomain {
+			cp := *a
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (s *stubAgentRepo) CountByOwner(_ context.Context, ownerUserID uuid.UUID) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, a := range s.rows {
+		if a.OwnerUserID != nil && *a.OwnerUserID == ownerUserID && a.Status != "revoked" {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 func newTestAgentService(repo *stubAgentRepo, issuer *identity.Issuer, ledger trustledger.Ledger, verifier service.DomainVerifier) *service.AgentService {
@@ -167,7 +205,7 @@ func newTestAgentService(repo *stubAgentRepo, issuer *identity.Issuer, ledger tr
 
 func testRegisterRequest() *model.RegisterRequest {
 	return &model.RegisterRequest{
-		TrustRoot:      "nexus.io",
+		TrustRoot:      "nexusagentprotocol.com",
 		CapabilityNode: "finance/taxes",
 		DisplayName:    "Tax Agent",
 		Description:    "Handles tax computations",
@@ -225,7 +263,7 @@ func TestRegister_setsURI(t *testing.T) {
 		t.Fatal(err)
 	}
 	uri := agent.URI()
-	if !strings.HasPrefix(uri, "agent://nexus.io/finance/taxes/agent_") {
+	if !strings.HasPrefix(uri, "agent://nexusagentprotocol.com/finance/taxes/agent_") {
 		t.Errorf("unexpected URI: %s", uri)
 	}
 }
@@ -290,14 +328,14 @@ func TestList_filterByTrustRoot(t *testing.T) {
 	svc := newTestAgentService(repo, nil, nil, nil)
 
 	req1 := testRegisterRequest()
-	req1.TrustRoot = "nexus.io"
+	req1.TrustRoot = "nexusagentprotocol.com"
 	svc.Register(context.Background(), req1)
 
 	req2 := testRegisterRequest()
 	req2.TrustRoot = "other.io"
 	svc.Register(context.Background(), req2)
 
-	agents, err := svc.List(context.Background(), "nexus.io", "", 50, 0)
+	agents, err := svc.List(context.Background(), "nexusagentprotocol.com", "", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +531,7 @@ func TestResolve_activeAgent(t *testing.T) {
 	agent, _ := svc.Register(context.Background(), testRegisterRequest())
 	svc.Activate(context.Background(), agent.ID)
 
-	resolved, err := svc.Resolve(context.Background(), "nexus.io", "finance/taxes", agent.AgentID)
+	resolved, err := svc.Resolve(context.Background(), "nexusagentprotocol.com", "finance/taxes", agent.AgentID)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -509,11 +547,168 @@ func TestResolve_inactiveAgent(t *testing.T) {
 	agent, _ := svc.Register(context.Background(), testRegisterRequest())
 	// Don't activate — agent is pending
 
-	_, err := svc.Resolve(context.Background(), "nexus.io", "finance/taxes", agent.AgentID)
+	_, err := svc.Resolve(context.Background(), "nexusagentprotocol.com", "finance/taxes", agent.AgentID)
 	if err == nil {
 		t.Error("expected error for pending agent")
 	}
 	if !strings.Contains(err.Error(), "not active") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// ── stubEmailChecker ──────────────────────────────────────────────────────
+
+type stubEmailChecker struct {
+	verified bool
+}
+
+func (s *stubEmailChecker) IsEmailVerified(_ context.Context, _ uuid.UUID) (bool, error) {
+	return s.verified, nil
+}
+
+// ── Free-tier (nap_hosted) tests ──────────────────────────────────────────
+
+func napHostedRequest(userID uuid.UUID, username string) *model.RegisterRequest {
+	return &model.RegisterRequest{
+		RegistrationType: model.RegistrationTypeNAPHosted,
+		DisplayName:      "My Hosted Agent",
+		Endpoint:         "https://myagent.example.com",
+		OwnerUserID:      &userID,
+		Username:         username,
+	}
+}
+
+func TestRegister_napHosted_success(t *testing.T) {
+	repo := newStubAgentRepo()
+	svc := newTestAgentService(repo, nil, nil, nil)
+
+	userID := uuid.New()
+	agent, err := svc.Register(context.Background(), napHostedRequest(userID, "alice"))
+	if err != nil {
+		t.Fatalf("Register nap_hosted: %v", err)
+	}
+	if agent.RegistrationType != model.RegistrationTypeNAPHosted {
+		t.Errorf("expected nap_hosted, got %s", agent.RegistrationType)
+	}
+	if agent.TrustRoot != "nexusagentprotocol.com" {
+		t.Errorf("expected trust root nexusagentprotocol.com, got %s", agent.TrustRoot)
+	}
+	if agent.CapabilityNode != "hosted/alice" {
+		t.Errorf("expected hosted/alice, got %s", agent.CapabilityNode)
+	}
+	if agent.OwnerUserID == nil || *agent.OwnerUserID != userID {
+		t.Errorf("owner_user_id mismatch")
+	}
+}
+
+func TestRegister_napHosted_quotaEnforced(t *testing.T) {
+	repo := newStubAgentRepo()
+	svc := newTestAgentService(repo, nil, nil, nil)
+	svc.SetFreeTierConfig(service.FreeTierConfig{TrustRoot: "nexusagentprotocol.com", MaxAgents: 2})
+
+	userID := uuid.New()
+	for i := 0; i < 2; i++ {
+		_, err := svc.Register(context.Background(), napHostedRequest(userID, "alice"))
+		if err != nil {
+			t.Fatalf("register agent %d: %v", i, err)
+		}
+	}
+
+	_, err := svc.Register(context.Background(), napHostedRequest(userID, "alice"))
+	if err == nil {
+		t.Fatal("expected quota error for 3rd agent")
+	}
+	if !strings.Contains(err.Error(), "free tier limit") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestRegister_napHosted_requiresOwnerUserID(t *testing.T) {
+	svc := newTestAgentService(newStubAgentRepo(), nil, nil, nil)
+	req := &model.RegisterRequest{
+		RegistrationType: model.RegistrationTypeNAPHosted,
+		DisplayName:      "Agent",
+		Endpoint:         "https://example.com",
+		Username:         "alice",
+		// OwnerUserID intentionally absent
+	}
+	_, err := svc.Register(context.Background(), req)
+	if err == nil {
+		t.Error("expected error when owner_user_id missing")
+	}
+}
+
+func TestActivate_napHosted_requiresEmailVerified(t *testing.T) {
+	repo := newStubAgentRepo()
+	svc := newTestAgentService(repo, nil, nil, nil)
+	svc.SetEmailChecker(&stubEmailChecker{verified: false})
+
+	userID := uuid.New()
+	agent, err := svc.Register(context.Background(), napHostedRequest(userID, "alice"))
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	_, err = svc.Activate(context.Background(), agent.ID)
+	if err == nil {
+		t.Error("expected error when email not verified")
+	}
+	if !strings.Contains(err.Error(), "email") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestActivate_napHosted_succeedsWhenEmailVerified(t *testing.T) {
+	repo := newStubAgentRepo()
+	svc := newTestAgentService(repo, nil, nil, nil)
+	svc.SetEmailChecker(&stubEmailChecker{verified: true})
+
+	userID := uuid.New()
+	agent, err := svc.Register(context.Background(), napHostedRequest(userID, "alice"))
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	result, err := svc.Activate(context.Background(), agent.ID)
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if result.Agent.Status != model.AgentStatusActive {
+		t.Errorf("expected active, got %s", result.Agent.Status)
+	}
+}
+
+func TestActivate_napHosted_skipsEmailCheck_whenCheckerNil(t *testing.T) {
+	repo := newStubAgentRepo()
+	svc := newTestAgentService(repo, nil, nil, nil)
+	// No email checker set — should activate without email verification gate
+
+	userID := uuid.New()
+	agent, err := svc.Register(context.Background(), napHostedRequest(userID, "alice"))
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	result, err := svc.Activate(context.Background(), agent.ID)
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if result.Agent.Status != model.AgentStatusActive {
+		t.Errorf("expected active, got %s", result.Agent.Status)
+	}
+}
+
+func TestRegister_domain_requiresTrustRoot(t *testing.T) {
+	svc := newTestAgentService(newStubAgentRepo(), nil, nil, nil)
+	req := &model.RegisterRequest{
+		RegistrationType: model.RegistrationTypeDomain,
+		DisplayName:      "Agent",
+		Endpoint:         "https://example.com",
+		OwnerDomain:      "example.com",
+		// TrustRoot intentionally absent
+	}
+	_, err := svc.Register(context.Background(), req)
+	if err == nil {
+		t.Error("expected error when trust_root missing for domain registration")
 	}
 }
