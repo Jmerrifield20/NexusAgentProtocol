@@ -11,11 +11,11 @@ func TestParse_valid(t *testing.T) {
 	data := []byte(`{
 		"schema_version": "1.0",
 		"domain": "example.com",
-		"trust_root": "nexus.io",
+		"trust_root": "nexusagentprotocol.com",
 		"updated_at": "2026-01-01T00:00:00Z",
 		"agents": [
 			{
-				"uri": "agent://nexus.io/assistant/agent_abc",
+				"uri": "agent://nexusagentprotocol.com/assistant/agent_abc",
 				"display_name": "Test Agent",
 				"endpoint": "https://example.com/agent",
 				"capability_node": "assistant",
@@ -43,11 +43,11 @@ func TestParse_missingRequiredFields(t *testing.T) {
 	}{
 		{
 			name: "missing schema_version",
-			data: []byte(`{"domain":"example.com","trust_root":"nexus.io","agents":[]}`),
+			data: []byte(`{"domain":"example.com","trust_root":"nexusagentprotocol.com","agents":[]}`),
 		},
 		{
 			name: "missing domain",
-			data: []byte(`{"schema_version":"1.0","trust_root":"nexus.io","agents":[]}`),
+			data: []byte(`{"schema_version":"1.0","trust_root":"nexusagentprotocol.com","agents":[]}`),
 		},
 		{
 			name: "missing trust_root",
@@ -70,10 +70,10 @@ func TestValidate_agentMissingEndpoint(t *testing.T) {
 	card := &agentcard.AgentCard{
 		SchemaVersion: "1.0",
 		Domain:        "example.com",
-		TrustRoot:     "nexus.io",
+		TrustRoot:     "nexusagentprotocol.com",
 		UpdatedAt:     time.Now(),
 		Agents: []agentcard.AgentEntry{
-			{URI: "agent://nexus.io/a/agent_x", Endpoint: ""},
+			{URI: "agent://nexusagentprotocol.com/a/agent_x", Endpoint: ""},
 		},
 	}
 	if err := card.Validate(); err == nil {

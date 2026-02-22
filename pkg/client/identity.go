@@ -52,7 +52,7 @@ func LoadCertBundle(dir string) (*CertBundle, error) {
 // Additional options (e.g. WithCacheTTL) can be appended:
 //
 //	c, err := client.NewFromCertDir(
-//	    "https://registry.nexus.io",
+//	    "https://registry.nexusagentprotocol.com",
 //	    os.ExpandEnv("$HOME/.nap/certs/example.com"),
 //	    client.WithCacheTTL(60*time.Second),
 //	)

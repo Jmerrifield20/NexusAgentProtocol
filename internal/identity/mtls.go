@@ -11,6 +11,7 @@ import (
 const (
 	ctxAgentURI    = "nexus_agent_uri"
 	ctxTokenClaims = "nexus_token_claims"
+	ctxUserClaims  = "nexus_user_claims"
 )
 
 // RequireMTLS returns a Gin middleware that enforces mutual TLS on the route.
@@ -88,6 +89,58 @@ func AgentURIFromCtx(c *gin.Context) string {
 func ClaimsFromCtx(c *gin.Context) *TaskTokenClaims {
 	v, _ := c.Get(ctxTokenClaims)
 	claims, _ := v.(*TaskTokenClaims)
+	return claims
+}
+
+// OptionalToken returns a Gin middleware that tries to parse a Bearer Task Token.
+// Unlike RequireToken, it never aborts — it silently skips injection when the
+// header is absent or the token fails verification.
+func OptionalToken(tokens *TokenIssuer) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+			if claims, err := tokens.Verify(tokenStr); err == nil {
+				c.Set(ctxTokenClaims, claims)
+			}
+		}
+		c.Next()
+	}
+}
+
+// RequireUserToken returns a Gin middleware that enforces a valid user session Bearer token.
+//
+// On success it injects the *UserTokenClaims into the context under the
+// "nexus_user_claims" key.
+func RequireUserToken(tokens *UserTokenIssuer) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "Bearer user token required",
+			})
+			return
+		}
+
+		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+		claims, err := tokens.Verify(tokenStr)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid user token: " + err.Error(),
+			})
+			return
+		}
+
+		c.Set(ctxUserClaims, claims)
+		c.Next()
+	}
+}
+
+// UserClaimsFromCtx retrieves the user token claims injected by RequireUserToken.
+// Returns nil if no user token is present in the context.
+func UserClaimsFromCtx(c *gin.Context) *UserTokenClaims {
+	v, _ := c.Get(ctxUserClaims)
+	claims, _ := v.(*UserTokenClaims)
 	return claims
 }
 

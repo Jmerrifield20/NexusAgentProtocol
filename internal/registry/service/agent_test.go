@@ -58,13 +58,18 @@ func (s *stubAgentRepo) GetByID(_ context.Context, id uuid.UUID) (*model.Agent, 
 func (s *stubAgentRepo) GetByAgentID(_ context.Context, trustRoot, capNode, agentID string) (*model.Agent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	id, ok := s.byKey[agentKey(trustRoot, capNode, agentID)]
-	if !ok {
-		return nil, repository.ErrNotFound
+	// Mirror the real repo: capNode is the top-level category from the URI.
+	// Match agents whose capability_node equals capNode OR starts with capNode+">".
+	for _, a := range s.rows {
+		if a.TrustRoot != trustRoot || a.AgentID != agentID {
+			continue
+		}
+		if a.CapabilityNode == capNode || strings.HasPrefix(a.CapabilityNode, capNode+">") {
+			cp := *a
+			return &cp, nil
+		}
 	}
-	a := s.rows[id]
-	cp := *a
-	return &cp, nil
+	return nil, repository.ErrNotFound
 }
 
 func (s *stubAgentRepo) List(_ context.Context, trustRoot, capNode string, limit, offset int) ([]*model.Agent, error) {
@@ -75,7 +80,7 @@ func (s *stubAgentRepo) List(_ context.Context, trustRoot, capNode string, limit
 		if trustRoot != "" && a.TrustRoot != trustRoot {
 			continue
 		}
-		if capNode != "" && a.CapabilityNode != capNode {
+		if capNode != "" && a.CapabilityNode != capNode && !strings.HasPrefix(a.CapabilityNode, capNode+">") {
 			continue
 		}
 		cp := *a
@@ -172,15 +177,35 @@ func (s *stubAgentRepo) ListByOwnerUserID(_ context.Context, ownerUserID uuid.UU
 	return out, nil
 }
 
-func (s *stubAgentRepo) SearchByDomain(_ context.Context, domain string, limit, offset int) ([]*model.Agent, error) {
+func (s *stubAgentRepo) SearchByOrg(_ context.Context, orgName string, limit, offset int) ([]*model.Agent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var out []*model.Agent
 	for _, a := range s.rows {
-		if a.TrustRoot == domain && a.Status == model.AgentStatusActive && a.RegistrationType == model.RegistrationTypeDomain {
+		if a.TrustRoot == orgName && a.Status == model.AgentStatusActive {
 			cp := *a
 			out = append(out, &cp)
 		}
+	}
+	return out, nil
+}
+
+func (s *stubAgentRepo) SearchByCapability(_ context.Context, capability, domain string, limit, offset int) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if a.Status != model.AgentStatusActive {
+			continue
+		}
+		if a.CapabilityNode != capability && !strings.HasPrefix(a.CapabilityNode, capability+">") {
+			continue
+		}
+		if domain != "" && a.TrustRoot != domain {
+			continue
+		}
+		cp := *a
+		out = append(out, &cp)
 	}
 	return out, nil
 }
@@ -205,12 +230,12 @@ func newTestAgentService(repo *stubAgentRepo, issuer *identity.Issuer, ledger tr
 
 func testRegisterRequest() *model.RegisterRequest {
 	return &model.RegisterRequest{
-		TrustRoot:      "nexusagentprotocol.com",
-		CapabilityNode: "finance/taxes",
-		DisplayName:    "Tax Agent",
-		Description:    "Handles tax computations",
-		Endpoint:       "https://tax.example.com",
-		OwnerDomain:    "example.com",
+		Capability:  "finance>accounting",
+		OrgName:     "acme",
+		DisplayName: "Tax Agent",
+		Description: "Handles tax computations",
+		Endpoint:    "https://tax.example.com",
+		OwnerDomain: "example.com",
 	}
 }
 
@@ -263,24 +288,27 @@ func TestRegister_setsURI(t *testing.T) {
 		t.Fatal(err)
 	}
 	uri := agent.URI()
-	if !strings.HasPrefix(uri, "agent://nexusagentprotocol.com/finance/taxes/agent_") {
+	// Format: agent://{owner_domain}/{category}/{agent_id}
+	if !strings.HasPrefix(uri, "agent://example.com/finance/agent_") {
 		t.Errorf("unexpected URI: %s", uri)
 	}
 }
 
-func TestRegister_normalizesCapNode(t *testing.T) {
+func TestRegister_normalizesCapability(t *testing.T) {
 	repo := newStubAgentRepo()
 	svc := newTestAgentService(repo, nil, nil, nil)
 
 	req := testRegisterRequest()
-	req.CapabilityNode = "/Finance/TAXES/"
+	req.Capability = ""        // clear primary field
+	req.Category = ""          // clear secondary field
+	req.CapabilityNode = "Finance" // legacy fallback: uppercased, should normalize to "finance"
 
 	agent, err := svc.Register(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agent.CapabilityNode != "finance/taxes" {
-		t.Errorf("expected normalized cap node, got %q", agent.CapabilityNode)
+	if agent.CapabilityNode != "finance" {
+		t.Errorf("expected normalized capability, got %q", agent.CapabilityNode)
 	}
 }
 
@@ -323,19 +351,20 @@ func TestGet_notFound(t *testing.T) {
 	}
 }
 
-func TestList_filterByTrustRoot(t *testing.T) {
+func TestList_filterByOrgName(t *testing.T) {
 	repo := newStubAgentRepo()
 	svc := newTestAgentService(repo, nil, nil, nil)
 
 	req1 := testRegisterRequest()
-	req1.TrustRoot = "nexusagentprotocol.com"
+	req1.OwnerDomain = "acme.com"
 	svc.Register(context.Background(), req1)
 
 	req2 := testRegisterRequest()
-	req2.TrustRoot = "other.io"
+	req2.OwnerDomain = "other-corp.com"
 	svc.Register(context.Background(), req2)
 
-	agents, err := svc.List(context.Background(), "nexusagentprotocol.com", "", 50, 0)
+	// trust_root = owner_domain for domain-verified agents
+	agents, err := svc.List(context.Background(), "acme.com", "", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,19 +373,22 @@ func TestList_filterByTrustRoot(t *testing.T) {
 	}
 }
 
-func TestList_filterByCapNode(t *testing.T) {
+func TestList_filterByCategory(t *testing.T) {
 	repo := newStubAgentRepo()
 	svc := newTestAgentService(repo, nil, nil, nil)
 
 	req1 := testRegisterRequest()
-	req1.CapabilityNode = "finance/taxes"
+	req1.Capability = "finance>accounting"
+	req1.OrgName = "acme"
 	svc.Register(context.Background(), req1)
 
 	req2 := testRegisterRequest()
-	req2.CapabilityNode = "health/diagnosis"
+	req2.Capability = "healthcare>clinical"
+	req2.OrgName = "mayo"
 	svc.Register(context.Background(), req2)
 
-	agents, err := svc.List(context.Background(), "", "finance/taxes", 50, 0)
+	// Prefix filter: "finance" should match "finance>accounting"
+	agents, err := svc.List(context.Background(), "", "finance", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +563,7 @@ func TestResolve_activeAgent(t *testing.T) {
 	agent, _ := svc.Register(context.Background(), testRegisterRequest())
 	svc.Activate(context.Background(), agent.ID)
 
-	resolved, err := svc.Resolve(context.Background(), "nexusagentprotocol.com", "finance/taxes", agent.AgentID)
+	resolved, err := svc.Resolve(context.Background(), "example.com", "finance", agent.AgentID)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -547,7 +579,7 @@ func TestResolve_inactiveAgent(t *testing.T) {
 	agent, _ := svc.Register(context.Background(), testRegisterRequest())
 	// Don't activate — agent is pending
 
-	_, err := svc.Resolve(context.Background(), "nexusagentprotocol.com", "finance/taxes", agent.AgentID)
+	_, err := svc.Resolve(context.Background(), "example.com", "finance", agent.AgentID)
 	if err == nil {
 		t.Error("expected error for pending agent")
 	}
@@ -575,6 +607,7 @@ func napHostedRequest(userID uuid.UUID, username string) *model.RegisterRequest 
 		Endpoint:         "https://myagent.example.com",
 		OwnerUserID:      &userID,
 		Username:         username,
+		Capability:       "finance>accounting",
 	}
 }
 
@@ -590,11 +623,15 @@ func TestRegister_napHosted_success(t *testing.T) {
 	if agent.RegistrationType != model.RegistrationTypeNAPHosted {
 		t.Errorf("expected nap_hosted, got %s", agent.RegistrationType)
 	}
-	if agent.TrustRoot != "nexusagentprotocol.com" {
-		t.Errorf("expected trust root nexusagentprotocol.com, got %s", agent.TrustRoot)
+	// New URI model: capability_node = full capability path,
+	// trust_root = FreeTierConfig.TrustRoot ("nap"), NOT the username.
+	// This prevents impersonation: anyone who picks username "amazon" should
+	// not receive agent://amazon/finance/<id>.
+	if agent.CapabilityNode != "finance>accounting" {
+		t.Errorf("capability_node: expected finance>accounting, got %s", agent.CapabilityNode)
 	}
-	if agent.CapabilityNode != "hosted/alice" {
-		t.Errorf("expected hosted/alice, got %s", agent.CapabilityNode)
+	if agent.TrustRoot != "nap" {
+		t.Errorf("trust_root: expected nap (FreeTierConfig.TrustRoot), got %s", agent.TrustRoot)
 	}
 	if agent.OwnerUserID == nil || *agent.OwnerUserID != userID {
 		t.Errorf("owner_user_id mismatch")
@@ -618,7 +655,7 @@ func TestRegister_napHosted_quotaEnforced(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected quota error for 3rd agent")
 	}
-	if !strings.Contains(err.Error(), "free tier limit") {
+	if !strings.Contains(err.Error(), "agent limit") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -698,17 +735,17 @@ func TestActivate_napHosted_skipsEmailCheck_whenCheckerNil(t *testing.T) {
 	}
 }
 
-func TestRegister_domain_requiresTrustRoot(t *testing.T) {
+func TestRegister_domain_requiresOwnerDomain(t *testing.T) {
 	svc := newTestAgentService(newStubAgentRepo(), nil, nil, nil)
 	req := &model.RegisterRequest{
 		RegistrationType: model.RegistrationTypeDomain,
+		Capability:       "finance",
 		DisplayName:      "Agent",
 		Endpoint:         "https://example.com",
-		OwnerDomain:      "example.com",
-		// TrustRoot intentionally absent
+		// OwnerDomain intentionally absent — should fail
 	}
 	_, err := svc.Register(context.Background(), req)
 	if err == nil {
-		t.Error("expected error when trust_root missing for domain registration")
+		t.Error("expected error when owner_domain missing for domain registration")
 	}
 }

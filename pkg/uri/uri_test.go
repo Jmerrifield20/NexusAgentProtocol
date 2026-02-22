@@ -8,28 +8,35 @@ import (
 
 func TestParse_valid(t *testing.T) {
 	cases := []struct {
-		input          string
-		trustRoot      string
-		capabilityNode string
-		agentID        string
+		input    string
+		category string
+		orgName  string
+		agentID  string
 	}{
 		{
-			input:          "agent://nexus.io/finance/taxes/agent_7x2v9qaabbcc",
-			trustRoot:      "nexus.io",
-			capabilityNode: "finance/taxes",
-			agentID:        "agent_7x2v9qaabbcc",
+			input:    "agent://acme/finance/agent_7x2v9qaabbcc",
+			category: "finance",
+			orgName:  "acme",
+			agentID:  "agent_7x2v9qaabbcc",
 		},
 		{
-			input:          "agent://nexus.io/assistant/agent_abc123",
-			trustRoot:      "nexus.io",
-			capabilityNode: "assistant",
-			agentID:        "agent_abc123",
+			input:    "agent://johndoe/research/agent_abc123",
+			category: "research",
+			orgName:  "johndoe",
+			agentID:  "agent_abc123",
 		},
 		{
-			input:          "agent://registry.example.com/a/b/c/agent_xyz",
-			trustRoot:      "registry.example.com",
-			capabilityNode: "a/b/c",
-			agentID:        "agent_xyz",
+			input:    "agent://staples/officesupplies/agent_xyz",
+			category: "officesupplies",
+			orgName:  "staples",
+			agentID:  "agent_xyz",
+		},
+		// domain-verified: full domain as org-name
+		{
+			input:    "agent://amazon.com/commerce/agent_3k8mwpqq",
+			category: "commerce",
+			orgName:  "amazon.com",
+			agentID:  "agent_3k8mwpqq",
 		},
 	}
 
@@ -40,11 +47,11 @@ func TestParse_valid(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if u.TrustRoot != tc.trustRoot {
-				t.Errorf("TrustRoot: got %q, want %q", u.TrustRoot, tc.trustRoot)
+			if u.Category != tc.category {
+				t.Errorf("Category: got %q, want %q", u.Category, tc.category)
 			}
-			if u.CapabilityNode != tc.capabilityNode {
-				t.Errorf("CapabilityNode: got %q, want %q", u.CapabilityNode, tc.capabilityNode)
+			if u.OrgName != tc.orgName {
+				t.Errorf("OrgName: got %q, want %q", u.OrgName, tc.orgName)
 			}
 			if u.AgentID != tc.agentID {
 				t.Errorf("AgentID: got %q, want %q", u.AgentID, tc.agentID)
@@ -55,10 +62,10 @@ func TestParse_valid(t *testing.T) {
 
 func TestParse_invalid(t *testing.T) {
 	cases := []string{
-		"https://nexus.io/finance/taxes/agent_abc",  // wrong scheme
-		"agent://nexus.io/agent_abc",                // missing capability node
-		"agent:///finance/taxes/agent_abc",          // empty trust root
-		"agent://nexus.io/finance/taxes/notanagent", // agent_id without prefix
+		"https://acme/finance/agent_abc",     // wrong scheme
+		"agent://acme/agent_abc",             // missing category (only 1 path segment)
+		"agent:///finance/acme/agent_abc",    // empty org-name
+		"agent://acme/finance/notanagent",    // agent-id without prefix
 		"not-a-uri",
 	}
 
@@ -74,7 +81,7 @@ func TestParse_invalid(t *testing.T) {
 }
 
 func TestURI_String(t *testing.T) {
-	raw := "agent://nexus.io/finance/taxes/agent_7x2v9q"
+	raw := "agent://acme/finance/agent_7x2v9q"
 	u, err := uri.Parse(raw)
 	if err != nil {
 		t.Fatal(err)

@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 )
 
+
 // AgentHandler handles HTTP requests for the agent registry.
 type AgentHandler struct {
 	svc        *service.AgentService
@@ -90,13 +91,14 @@ func (h *AgentHandler) Register(rg *gin.RouterGroup) {
 		agents.GET("", h.ListAgents)
 		agents.GET("/:id", h.GetAgent)
 		agents.PATCH("/:id", h.optionalAgentToken(), h.optionalUserToken(), h.UpdateAgent)
-		agents.DELETE("/:id", h.requireToken(), h.optionalUserToken(), h.DeleteAgent)
-		agents.POST("/:id/activate", h.ActivateAgent)
+		agents.DELETE("/:id", h.optionalAgentToken(), h.optionalUserToken(), h.DeleteAgent)
+		agents.POST("/:id/activate", h.optionalAgentToken(), h.optionalUserToken(), h.ActivateAgent)
 		agents.POST("/:id/revoke", h.requireToken(), h.optionalUserToken(), h.RevokeAgent)
 	}
 
 	rg.GET("/resolve", h.ResolveAgent)
 	rg.GET("/lookup", h.LookupByDomain)
+	rg.GET("/capabilities", h.GetCapabilities)
 	rg.GET("/users/me/agents", h.requireUserToken(), h.ListMyAgents)
 }
 
@@ -132,6 +134,11 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 	agent, err := h.svc.Register(c.Request.Context(), &req)
 	if err != nil {
 		h.logger.Error("register agent", zap.Error(err))
+		var valErr *model.ErrValidation
+		if errors.As(err, &valErr) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": valErr.Msg})
+			return
+		}
 		if isQuotaError(err) {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 			return
@@ -315,7 +322,46 @@ func (h *AgentHandler) ActivateAgent(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.Activate(c.Request.Context(), id)
+	ctx := c.Request.Context()
+
+	// Ownership check: caller must be the agent (task token) or the owning user.
+	agent, err := h.svc.Get(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get agent"})
+		return
+	}
+
+	agentClaims := identity.ClaimsFromCtx(c)
+	userClaims := userFromCtx(c)
+
+	authorized := false
+	if agentClaims != nil {
+		authorized = agentClaims.AgentURI == agent.URI() || identity.HasScope(agentClaims, "nexus:admin")
+	}
+	if !authorized && userClaims != nil && agent.OwnerUserID != nil {
+		uid, _ := uuid.Parse(userClaims.UserID)
+		authorized = *agent.OwnerUserID == uid
+	}
+	// Domain-verified agents without an owner can be activated by anyone who
+	// completes the DNS-01 challenge — the DNS check in svc.Activate is the gate.
+	if !authorized && agent.OwnerUserID == nil && agent.RegistrationType == "domain" {
+		authorized = true
+	}
+
+	if !authorized {
+		if agentClaims == nil && userClaims == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		c.JSON(http.StatusForbidden, gin.H{"error": "not authorized to activate this agent"})
+		return
+	}
+
+	result, err := h.svc.Activate(ctx, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
@@ -464,12 +510,21 @@ func toCardView(a *model.Agent) agentCardView {
 	}
 }
 
-// LookupByDomain handles GET /lookup?domain=acme.com — returns all active,
-// domain-verified agents registered under the given trust-root domain.
+// LookupByDomain handles GET /lookup — agent discovery by org namespace and/or capability.
+//
+// Supported query parameters:
+//
+//	?org=acme                     — all active agents for that org namespace
+//	?capability=finance           — all active agents with that capability (prefix match)
+//	?org=acme&capability=finance  — combined filter
+//
+// At least one of org or capability must be provided.
 func (h *AgentHandler) LookupByDomain(c *gin.Context) {
-	domain := c.Query("domain")
-	if domain == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "domain query parameter is required"})
+	org := c.Query("org")
+	capability := c.Query("capability")
+
+	if org == "" && capability == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one of org or capability is required"})
 		return
 	}
 
@@ -482,11 +537,27 @@ func (h *AgentHandler) LookupByDomain(c *gin.Context) {
 		offset = 0
 	}
 
-	agents, err := h.svc.LookupByDomain(c.Request.Context(), domain, limit, offset)
-	if err != nil {
-		h.logger.Error("lookup by domain", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "lookup failed"})
-		return
+	ctx := c.Request.Context()
+
+	var agents []*model.Agent
+	var err error
+
+	if capability != "" {
+		// Capability-first (optionally filtered by org).
+		agents, err = h.svc.LookupByCapability(ctx, capability, org, limit, offset)
+		if err != nil {
+			h.logger.Error("lookup by capability", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "lookup failed"})
+			return
+		}
+	} else {
+		// Org-only lookup.
+		agents, err = h.svc.LookupByOrg(ctx, org, limit, offset)
+		if err != nil {
+			h.logger.Error("lookup by org", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "lookup failed"})
+			return
+		}
 	}
 
 	cards := make([]agentCardView, len(agents))
@@ -494,11 +565,49 @@ func (h *AgentHandler) LookupByDomain(c *gin.Context) {
 		cards[i] = toCardView(a)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"domain": domain,
+	resp := gin.H{
 		"agents": cards,
 		"count":  len(cards),
-	})
+	}
+	if org != "" {
+		resp["org"] = org
+	}
+	if capability != "" {
+		resp["capability"] = capability
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// GetCapabilities handles GET /capabilities — returns the full three-level taxonomy.
+//
+// Response shape:
+//
+//	{ "categories": [{ "name": "finance", "subcategories": [{ "name": "accounting", "items": [...] }] }] }
+func (h *AgentHandler) GetCapabilities(c *gin.Context) {
+	type item struct {
+		Name  string   `json:"name"`
+		Items []string `json:"items"`
+	}
+	type category struct {
+		Name          string `json:"name"`
+		Subcategories []item `json:"subcategories"`
+	}
+
+	cats := model.SortedCategories()
+	result := make([]category, len(cats))
+	for i, cat := range cats {
+		subs := model.SortedSubcategories(cat)
+		subItems := make([]item, len(subs))
+		for j, sub := range subs {
+			subItems[j] = item{
+				Name:  sub,
+				Items: model.SortedItems(cat, sub),
+			}
+		}
+		result[i] = category{Name: cat, Subcategories: subItems}
+	}
+	c.JSON(http.StatusOK, gin.H{"categories": result})
 }
 
 // isQuotaError returns true if the error is a free-tier quota violation.

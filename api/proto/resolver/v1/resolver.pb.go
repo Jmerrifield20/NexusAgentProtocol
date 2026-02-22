@@ -27,7 +27,7 @@ type ResolveRequest struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// trust_root is the hostname of the Nexus registry (e.g., "nexus.io").
+	// trust_root is the hostname of the Nexus registry (e.g., "nexusagentprotocol.com").
 	TrustRoot string `protobuf:"bytes,1,opt,name=trust_root,json=trustRoot,proto3" json:"trust_root,omitempty"`
 	// capability_node is the hierarchical classification path (e.g., "finance/taxes").
 	CapabilityNode string `protobuf:"bytes,2,opt,name=capability_node,json=capabilityNode,proto3" json:"capability_node,omitempty"`

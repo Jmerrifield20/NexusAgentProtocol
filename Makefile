@@ -38,12 +38,12 @@ test-cover:
 lint:
 	golangci-lint run ./...
 
-# Run DB migrations (requires DB_URL env var or default local)
+# Run DB migrations
 migrate:
-	migrate -path migrations -database "$${DATABASE_URL:-postgres://nexus:nexus@localhost:5432/nexus?sslmode=disable}" up
+	go run ./cmd/migrate
 
 migrate-down:
-	migrate -path migrations -database "$${DATABASE_URL:-postgres://nexus:nexus@localhost:5432/nexus?sslmode=disable}" down 1
+	@echo "migrate-down: use 'psql \$$DATABASE_URL' and revert manually, or roll back with golang-migrate CLI"
 
 # Generate protobuf + grpc-gateway (requires protoc in PATH or uses buf if available)
 proto:

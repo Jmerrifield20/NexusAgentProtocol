@@ -23,7 +23,7 @@ func TestIssuer_IssueAgentCert(t *testing.T) {
 	ca := newTestCA(t)
 	issuer := identity.NewIssuer(ca)
 
-	agentURI := "agent://nexus.io/finance/taxes/agent_testxyz"
+	agentURI := "agent://nexusagentprotocol.com/finance/taxes/agent_testxyz"
 	cert, err := issuer.IssueAgentCert(agentURI, "example.com", 24*time.Hour)
 	if err != nil {
 		t.Fatalf("IssueAgentCert() error: %v", err)
@@ -68,7 +68,7 @@ func TestIssuer_AgentURIFromCert(t *testing.T) {
 	ca := newTestCA(t)
 	issuer := identity.NewIssuer(ca)
 
-	agentURI := "agent://nexus.io/assistant/agent_abc123"
+	agentURI := "agent://nexusagentprotocol.com/assistant/agent_abc123"
 	cert, err := issuer.IssueAgentCert(agentURI, "example.com", time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestIssuer_VerifyAgentCert_rejectsUnknownCA(t *testing.T) {
 	issuer2 := identity.NewIssuer(ca2)
 
 	// Issue with CA1
-	cert, err := issuer1.IssueAgentCert("agent://nexus.io/a/agent_x", "example.com", time.Hour)
+	cert, err := issuer1.IssueAgentCert("agent://nexusagentprotocol.com/a/agent_x", "example.com", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestIssuer_VerifyPeerCert(t *testing.T) {
 	ca := newTestCA(t)
 	issuer := identity.NewIssuer(ca)
 
-	cert, err := issuer.IssueAgentCert("agent://nexus.io/test/agent_peer", "peer.example.com", time.Hour)
+	cert, err := issuer.IssueAgentCert("agent://nexusagentprotocol.com/test/agent_peer", "peer.example.com", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

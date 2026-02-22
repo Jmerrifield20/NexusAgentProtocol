@@ -1,10 +1,16 @@
 // Package uri provides parsing and validation for the agent:// URI scheme.
 //
-// URI format: agent://[trust-root]/[capability-node]/[agent-id]
+// URI format: agent://[org-name]/[category]/[agent-id]
 //
-// Example:
+// Examples:
 //
-//	agent://nexus.io/finance/taxes/agent_7x2v9qaabbccdd
+//	agent://acme.com/finance/agent_7x2v9qaabbccdd   (domain-verified)
+//	agent://nap/finance/agent_7x2v9qaabbccdd         (free-hosted)
+//
+// For domain-verified agents, org-name is the full verified domain (e.g. "acme.com").
+// For free-hosted agents, org-name is always "nap" (registry-controlled namespace).
+// The category is the top-level capability namespace (e.g. "finance", "legal").
+// The agent-id is the unique identifier assigned at registration.
 package uri
 
 import (
@@ -17,13 +23,17 @@ const scheme = "agent"
 
 // URI represents a parsed agent:// URI.
 type URI struct {
-	TrustRoot      string // e.g. "nexus.io"
-	CapabilityNode string // e.g. "finance/taxes"
-	AgentID        string // e.g. "agent_7x2v9q..."
-	raw            string
+	OrgName  string // e.g. "acme.com" or "nap" — verified domain (domain-verified) or "nap" (free-hosted) (url.Host)
+	Category string // e.g. "finance"   — top-level capability category (first path segment)
+	AgentID  string // e.g. "agent_7x…" — unique agent identifier
+	raw      string
 }
 
 // Parse parses an agent:// URI string.
+//
+// The expected structure is:
+//
+//	agent://{org-name}/{category}/{agent-id}
 func Parse(raw string) (*URI, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -34,27 +44,32 @@ func Parse(raw string) (*URI, error) {
 		return nil, fmt.Errorf("unsupported scheme %q: expected %q", u.Scheme, scheme)
 	}
 
-	trustRoot := u.Host
-	if trustRoot == "" {
-		return nil, fmt.Errorf("missing trust-root in URI %q", raw)
+	orgName := u.Host
+	if orgName == "" {
+		return nil, fmt.Errorf("missing org-name in URI %q", raw)
 	}
 
-	// Path: /[capability-node.../][agent-id]
-	// url.Parse puts everything after the host in Path with a leading slash.
+	// Path: /{category}/{agent-id}
 	path := strings.TrimPrefix(u.Path, "/")
 	if path == "" {
-		return nil, fmt.Errorf("missing capability-node and agent-id in URI %q", raw)
+		return nil, fmt.Errorf("missing category and agent-id in URI %q", raw)
 	}
 
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 {
-		return nil, fmt.Errorf("URI must contain at least one capability-node segment and an agent-id, got %q", path)
+		return nil, fmt.Errorf("URI must contain category and agent-id, got %q", path)
 	}
 
+	// category is the first path segment; agent-id is the last.
+	// Any intermediate segments are treated as part of the category path
+	// (forward-compatible with deeper hierarchies).
 	agentID := parts[len(parts)-1]
-	capabilityNode := strings.Join(parts[:len(parts)-1], "/")
+	category := strings.Join(parts[:len(parts)-1], "/")
 
-	if err := validateTrustRoot(trustRoot); err != nil {
+	if err := validateSegment("org-name", orgName); err != nil {
+		return nil, err
+	}
+	if err := validateSegment("category", category); err != nil {
 		return nil, err
 	}
 	if err := validateAgentID(agentID); err != nil {
@@ -62,16 +77,16 @@ func Parse(raw string) (*URI, error) {
 	}
 
 	return &URI{
-		TrustRoot:      trustRoot,
-		CapabilityNode: capabilityNode,
-		AgentID:        agentID,
-		raw:            raw,
+		OrgName:  orgName,
+		Category: category,
+		AgentID:  agentID,
+		raw:      raw,
 	}, nil
 }
 
 // String returns the canonical agent:// URI string.
 func (u *URI) String() string {
-	return fmt.Sprintf("%s://%s/%s/%s", scheme, u.TrustRoot, u.CapabilityNode, u.AgentID)
+	return fmt.Sprintf("%s://%s/%s/%s", scheme, u.OrgName, u.Category, u.AgentID)
 }
 
 // MustParse parses a URI and panics on error. Useful in tests and init blocks.
@@ -83,14 +98,13 @@ func MustParse(raw string) *URI {
 	return u
 }
 
-// validateTrustRoot checks that the trust-root is a valid hostname.
-func validateTrustRoot(host string) error {
-	if host == "" {
-		return fmt.Errorf("trust-root must not be empty")
+// validateSegment checks that a URI segment contains no illegal characters.
+func validateSegment(name, value string) error {
+	if value == "" {
+		return fmt.Errorf("%s must not be empty", name)
 	}
-	// Basic hostname validation: no spaces, no path characters.
-	if strings.ContainsAny(host, " /\\?#") {
-		return fmt.Errorf("trust-root %q contains invalid characters", host)
+	if strings.ContainsAny(value, " \\?#") {
+		return fmt.Errorf("%s %q contains invalid characters", name, value)
 	}
 	return nil
 }

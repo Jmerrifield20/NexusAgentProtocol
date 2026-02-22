@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,17 +57,38 @@ type Agent struct {
 	ExpiresAt        *time.Time `json:"expires_at,omitempty"     db:"expires_at"`
 	OwnerUserID      *uuid.UUID `json:"owner_user_id,omitempty"  db:"owner_user_id"`
 	RegistrationType string     `json:"registration_type"        db:"registration_type"`
+	// Extended metadata — user-editable via UpdateRequest.
+	Version     string   `json:"version"      db:"version"`
+	Tags        []string `json:"tags"         db:"tags"`
+	SupportURL  string   `json:"support_url"  db:"support_url"`
+	PricingInfo string   `json:"pricing_info" db:"pricing_info"`
+	// System-managed fields updated by health checks.
+	LastSeenAt   *time.Time `json:"last_seen_at,omitempty" db:"last_seen_at"`
+	HealthStatus string     `json:"health_status"          db:"health_status"`
 	// TrustTier is computed at read time from status, registration_type, and cert_serial.
 	// It is never stored in the database.
-	TrustTier        TrustTier  `json:"trust_tier"               db:"-"`
+	TrustTier TrustTier `json:"trust_tier" db:"-"`
 }
 
 // AgentMeta holds extensible key-value metadata for an agent.
 type AgentMeta map[string]string
 
 // URI returns the agent:// URI for this agent.
+//
+// Format: agent://{org}/{category}/{agent_id}
+//   - org         is trust_root — the full verified domain for domain-verified agents
+//                 (e.g. "acme.com"), or "nap" for free-hosted agents.
+//   - category    is the top-level segment of capability_node  (e.g. "finance")
+//   - agent_id    is the unique opaque identifier
+//
+// Subcategory detail (e.g. "finance>accounting>reconciliation") is intentionally
+// not encoded in the URI to keep addresses stable when capability paths evolve.
 func (a *Agent) URI() string {
-	return "agent://" + a.TrustRoot + "/" + a.CapabilityNode + "/" + a.AgentID
+	category := a.CapabilityNode
+	if idx := strings.Index(category, ">"); idx != -1 {
+		category = category[:idx]
+	}
+	return "agent://" + a.TrustRoot + "/" + category + "/" + a.AgentID
 }
 
 // ComputeTrustTier derives the credibility tier from the agent's current state.
@@ -98,8 +120,29 @@ type Certificate struct {
 
 // RegisterRequest is the payload for creating a new agent registration.
 type RegisterRequest struct {
-	TrustRoot        string     `json:"trust_root"`
-	CapabilityNode   string     `json:"capability_node"`
+	// Capability is the full three-level capability path using ">" as separator.
+	// Examples: "finance", "finance>accounting", "finance>accounting>reconciliation"
+	// All three levels are validated against the fixed Taxonomy.
+	// Required for all registration types. The top-level segment becomes the
+	// category in the URI: agent://{org}/{category}/{agent_id}
+	Capability string `json:"capability"`
+
+	// OrgName is deprecated for domain-verified agents — owner_domain is used
+	// directly as the trust_root and URI org segment (e.g. "acme.com").
+	// Retained for backward compatibility; ignored when OwnerDomain is set.
+	OrgName string `json:"org_name"`
+
+	// Category is accepted for backward-compatibility with single-level capability.
+	// Ignored when Capability is set.
+	Category string `json:"category"`
+
+	// CapabilityNode is accepted for backward-compatibility; ignored when Capability
+	// or Category is set.
+	CapabilityNode string `json:"capability_node"`
+
+	// TrustRoot is accepted for backward-compatibility; ignored when OrgName is set.
+	TrustRoot string `json:"trust_root"`
+
 	DisplayName      string     `json:"display_name"     binding:"required"`
 	Description      string     `json:"description"`
 	Endpoint         string     `json:"endpoint"`
@@ -116,7 +159,12 @@ type RegisterRequest struct {
 type UpdateRequest struct {
 	DisplayName  string    `json:"display_name"`
 	Description  string    `json:"description"`
-	Endpoint     string    `json:"endpoint" binding:"omitempty,url"`
+	Endpoint     string    `json:"endpoint"      binding:"omitempty,url"`
 	PublicKeyPEM string    `json:"public_key_pem"`
 	Metadata     AgentMeta `json:"metadata"`
+	// Extended metadata fields.
+	Version     string   `json:"version"`
+	Tags        []string `json:"tags"`
+	SupportURL  string   `json:"support_url"  binding:"omitempty,url"`
+	PricingInfo string   `json:"pricing_info"`
 }

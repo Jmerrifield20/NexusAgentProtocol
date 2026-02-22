@@ -1,8 +1,8 @@
-Here is the comprehensive **Nexus Agentic Protocol (NAP) Market Map and Technical Foundation** file. This document is designed to be the "README.md" or "architecture.md" in your new repository, providing both the vision for your code and the competitive landscape you are entering.
+Here is the comprehensive **Nexus Agent Protocol (NAP) Market Map and Technical Foundation** file. This document is designed to be the "README.md" or "architecture.md" in your new repository, providing both the vision for your code and the competitive landscape you are entering.
 
 # ---
 
-**ARCHITECTURE.md: Nexus Agentic Protocol (NAP)**
+**ARCHITECTURE.md: Nexus Agent Protocol (NAP)**
 
 **Project Status:** Active Development (Go-based Core)
 
@@ -10,7 +10,7 @@ Here is the comprehensive **Nexus Agentic Protocol (NAP) Market Map and Technica
 
 ## **1\. Executive Summary**
 
-The Nexus Agentic Protocol (NAP) is a standardized identity and discovery layer for the "Internet of Action." As the web shifts from human-centric pages to machine-centric interactions, NAP provides the agent:// URI scheme to ensure agents can find, verify, and transact with one another across sovereign domains.
+The Nexus Agent Protocol (NAP) is a standardized identity and discovery layer for the "Internet of Action." As the web shifts from human-centric pages to machine-centric interactions, NAP provides the agent:// URI scheme to ensure agents can find, verify, and transact with one another across sovereign domains.
 
 ## **2\. Market Map: The Competition (2026)**
 
@@ -31,7 +31,7 @@ NAP defines a topology-independent identifier that resolves via a **Central NIC 
 
 agent://\[registry-host\]/\[capability-node\]/\[agent-unique-id\]
 
-* **Example:** agent://nexus.io/finance/auditor-7  
+* **Example:** agent://nexusagentprotocol.com/finance/auditor-7  
 * **Resolution:** The Nexus-Core SDK (Go) queries the registry-host to receive a signed **Agent Card** containing the current HTTPS/gRPC endpoint and public key.
 
 ## **4\. Security Architecture (The "Triple Lock")**

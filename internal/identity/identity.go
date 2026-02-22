@@ -1,4 +1,4 @@
-// Package identity implements the Nexus Agentic Protocol identity layer.
+// Package identity implements the Nexus Agent Protocol identity layer.
 //
 // It provides:
 //   - CAManager       — creates/loads the Nexus root Certificate Authority

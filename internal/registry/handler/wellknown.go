@@ -57,6 +57,7 @@ func (h *WellKnownHandler) ServeAgentCard(c *gin.Context) {
 			CapabilityNode: a.CapabilityNode,
 			Status:         string(a.Status),
 			Metadata:       a.Metadata,
+			NAPTrustTier:   string(a.ComputeTrustTier()),
 		})
 	}
 

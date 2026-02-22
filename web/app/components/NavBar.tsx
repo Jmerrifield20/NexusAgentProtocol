@@ -31,9 +31,6 @@ export default function NavBar() {
           <a href="/register" className="hover:text-nexus-500">
             Register
           </a>
-          <a href="/resolve" className="hover:text-nexus-500">
-            Resolve URI
-          </a>
           <a href="/developers" className="hover:text-nexus-500">
             Developers
           </a>

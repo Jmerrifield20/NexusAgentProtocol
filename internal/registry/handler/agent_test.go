@@ -180,15 +180,35 @@ func (s *stubAgentRepo) ListByOwnerUserID(_ context.Context, ownerUserID uuid.UU
 	return out, nil
 }
 
-func (s *stubAgentRepo) SearchByDomain(_ context.Context, domain string, limit, offset int) ([]*model.Agent, error) {
+func (s *stubAgentRepo) SearchByOrg(_ context.Context, orgName string, limit, offset int) ([]*model.Agent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var out []*model.Agent
 	for _, a := range s.rows {
-		if a.TrustRoot == domain && a.Status == model.AgentStatusActive && a.RegistrationType == model.RegistrationTypeDomain {
+		if a.TrustRoot == orgName && a.Status == model.AgentStatusActive {
 			cp := *a
 			out = append(out, &cp)
 		}
+	}
+	return out, nil
+}
+
+func (s *stubAgentRepo) SearchByCapability(_ context.Context, capability, domain string, limit, offset int) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if a.Status != model.AgentStatusActive {
+			continue
+		}
+		if a.CapabilityNode != capability && !strings.HasPrefix(a.CapabilityNode, capability+"/") {
+			continue
+		}
+		if domain != "" && a.TrustRoot != domain {
+			continue
+		}
+		cp := *a
+		out = append(out, &cp)
 	}
 	return out, nil
 }
@@ -238,8 +258,8 @@ func setupTestRouter(t *testing.T, repo *stubAgentRepo, withAuth bool) (*gin.Eng
 func registerAgent(t *testing.T, router *gin.Engine) map[string]any {
 	t.Helper()
 	body := `{
-		"trust_root":"nexusagentprotocol.com",
-		"capability_node":"finance/taxes",
+		"category":"finance",
+		"org_name":"acme",
 		"display_name":"Tax Agent",
 		"endpoint":"https://tax.example.com",
 		"owner_domain":"example.com"
@@ -263,8 +283,8 @@ func TestCreateAgent_201(t *testing.T) {
 	router, _, _ := setupTestRouter(t, repo, false)
 
 	body := `{
-		"trust_root":"nexusagentprotocol.com",
-		"capability_node":"finance/taxes",
+		"category":"finance",
+		"org_name":"acme",
 		"display_name":"Tax Agent",
 		"endpoint":"https://tax.example.com",
 		"owner_domain":"example.com"
@@ -598,7 +618,7 @@ func TestResolveAgent_200(t *testing.T) {
 
 	agent, _ := svc.Get(context.Background(), uid)
 
-	url := "/api/v1/resolve?trust_root=nexusagentprotocol.com&capability_node=finance/taxes&agent_id=" + agent.AgentID
+	url := "/api/v1/resolve?trust_root=example.com&capability_node=finance&agent_id=" + agent.AgentID
 	req := httptest.NewRequest(http.MethodGet, url, nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -611,7 +631,7 @@ func TestResolveAgent_200(t *testing.T) {
 func TestResolveAgent_400_missingParams(t *testing.T) {
 	router, _, _ := setupTestRouter(t, newStubAgentRepo(), false)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/resolve?trust_root=nexusagentprotocol.com", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/resolve?trust_root=acme", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -649,12 +669,11 @@ func registerHostedAgent(t *testing.T, repo *stubAgentRepo, ownerID uuid.UUID) *
 	t.Helper()
 	uid := ownerID
 	a := &model.Agent{
-		TrustRoot:        "nexusagentprotocol.com",
-		CapabilityNode:   "hosted/testuser",
+		TrustRoot:        "testuser",  // org namespace = username for hosted agents
+		CapabilityNode:   "finance",   // category
 		AgentID:          "agent_" + ownerID.String()[:8],
 		DisplayName:      "Test Hosted Agent",
 		Endpoint:         "https://agent.example.com",
-		OwnerDomain:      "nexusagentprotocol.com",
 		Status:           model.AgentStatusActive,
 		OwnerUserID:      &uid,
 		RegistrationType: model.RegistrationTypeNAPHosted,

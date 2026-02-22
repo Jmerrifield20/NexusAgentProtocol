@@ -15,11 +15,13 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nexus-protocol/nexus/internal/email"
 	"github.com/nexus-protocol/nexus/internal/identity"
 	"github.com/nexus-protocol/nexus/internal/registry/handler"
 	"github.com/nexus-protocol/nexus/internal/registry/repository"
 	"github.com/nexus-protocol/nexus/internal/registry/service"
 	"github.com/nexus-protocol/nexus/internal/trustledger"
+	"github.com/nexus-protocol/nexus/internal/users"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
@@ -49,9 +51,17 @@ func run(logger *zap.Logger) error {
 	viper.SetDefault("identity.cert_dir", "certs")
 	viper.SetDefault("identity.token_ttl_seconds", 3600)
 	viper.SetDefault("identity.tls_enabled", true)
-	viper.SetDefault("registry.cors_origins", []string{"*"})
+	viper.SetDefault("registry.cors_origins", []string{"http://localhost:3000"})
 	viper.SetDefault("registry.rate_limit_rps", 20)
 	viper.SetDefault("registry.skip_dns_verify", false)
+	viper.SetDefault("free_tier.trust_root", "nexusagentprotocol.com")
+	viper.SetDefault("free_tier.max_agents", 3)
+	viper.SetDefault("email.smtp_host", "")
+	viper.SetDefault("email.smtp_port", 587)
+	viper.SetDefault("email.smtp_username", "")
+	viper.SetDefault("email.smtp_password", "")
+	viper.SetDefault("email.from_address", "noreply@nexusagentprotocol.com")
+	viper.SetDefault("registry.frontend_url", "http://localhost:3000")
 
 	if err := viper.ReadInConfig(); err != nil {
 		var cfgNotFound viper.ConfigFileNotFoundError
@@ -76,8 +86,6 @@ func run(logger *zap.Logger) error {
 	// ── Trust Ledger ──────────────────────────────────────────────────────────
 	ledger := trustledger.NewPostgresLedger(db, logger)
 
-	// Verify chain integrity on startup; log a warning if the chain is broken
-	// but do not abort — the registry should still serve reads.
 	startCtx := context.Background()
 	if err := ledger.Verify(startCtx); err != nil {
 		logger.Warn("trust ledger integrity check FAILED", zap.Error(err))
@@ -108,26 +116,78 @@ func run(logger *zap.Logger) error {
 
 	tokenTTL := time.Duration(viper.GetInt("identity.token_ttl_seconds")) * time.Second
 	tokens := identity.NewTokenIssuer(ca.Key(), issuerURL, tokenTTL)
+	userTokens := identity.NewUserTokenIssuer(ca.Key(), issuerURL, 24*time.Hour)
 	oidcProvider := identity.NewOIDCProvider(issuerURL, tokens)
+
+	// ── Email Sender ──────────────────────────────────────────────────────────
+	var mailer email.EmailSender
+	smtpHost := viper.GetString("email.smtp_host")
+	if smtpHost != "" {
+		mailer = email.NewSMTPSender(
+			smtpHost,
+			viper.GetInt("email.smtp_port"),
+			viper.GetString("email.smtp_username"),
+			viper.GetString("email.smtp_password"),
+			viper.GetString("email.from_address"),
+		)
+		logger.Info("SMTP email sender configured", zap.String("host", smtpHost))
+	} else {
+		mailer = email.NewNoopSender(logger)
+		logger.Info("email sender: noop (set email.smtp_host to enable SMTP)")
+	}
 
 	// ── Wire up layers ────────────────────────────────────────────────────────
 	repo := repository.NewAgentRepository(db)
 	dnsRepo := repository.NewDNSChallengeRepository(db)
-	dnsSvc := service.NewDNSChallengeService(dnsRepo, nil, logger) // nil = real DNS lookups
+	dnsSvc := service.NewDNSChallengeService(dnsRepo, nil, logger)
 
-	// When REGISTRY_SKIP_DNS_VERIFY=true, pass nil so activation skips the DNS gate.
-	// Use this for local development only — never in production.
 	var dnsVerifier service.DomainVerifier = dnsSvc
 	if viper.GetBool("registry.skip_dns_verify") {
 		logger.Warn("DNS verification disabled — REGISTRY_SKIP_DNS_VERIFY is set; do not use in production")
 		dnsVerifier = nil
 	}
+
 	svc := service.NewAgentService(repo, issuer, ledger, dnsVerifier, logger)
+
+	// Free-tier configuration
+	freeTierCfg := service.FreeTierConfig{
+		TrustRoot: viper.GetString("free_tier.trust_root"),
+		MaxAgents: viper.GetInt("free_tier.max_agents"),
+	}
+	svc.SetFreeTierConfig(freeTierCfg)
+	svc.SetTokenIssuer(tokens)
+	svc.SetRegistryURL(issuerURL)
+
+	// User service
+	userRepo := users.NewUserRepository(db)
+	userSvc := users.NewUserService(userRepo, mailer, issuerURL, logger)
+	userSvc.SetFrontendURL(viper.GetString("registry.frontend_url"))
+	svc.SetEmailChecker(userSvc)
+
+	// OAuth provider configs
+	oauthCfgs := map[string]handler.OAuthProviderConfig{
+		"github": {
+			ClientID:     viper.GetString("oauth.github.client_id"),
+			ClientSecret: viper.GetString("oauth.github.client_secret"),
+			RedirectURL:  viper.GetString("oauth.github.redirect_url"),
+		},
+		"google": {
+			ClientID:     viper.GetString("oauth.google.client_id"),
+			ClientSecret: viper.GetString("oauth.google.client_secret"),
+			RedirectURL:  viper.GetString("oauth.google.redirect_url"),
+		},
+	}
+	viper.SetDefault("oauth.github.redirect_url", fmt.Sprintf("http://localhost:%d/api/v1/auth/oauth/github/callback", httpPort))
+	viper.SetDefault("oauth.google.redirect_url", fmt.Sprintf("http://localhost:%d/api/v1/auth/oauth/google/callback", httpPort))
+
 	agentHandler := handler.NewAgentHandler(svc, tokens, logger)
+	agentHandler.SetUserTokenIssuer(userTokens)
 	identityHandler := handler.NewIdentityHandler(issuer, tokens, logger)
 	ledgerHandler := handler.NewLedgerHandler(ledger, logger)
 	dnsHandler := handler.NewDNSHandler(dnsSvc, logger)
 	wkHandler := handler.NewWellKnownHandler(svc, logger)
+	authHandler := handler.NewAuthHandler(userSvc, userTokens, oauthCfgs, logger)
+	authHandler.SetFrontendURL(viper.GetString("registry.frontend_url"))
 
 	// ── HTTP Router ───────────────────────────────────────────────────────────
 	if os.Getenv("GIN_MODE") == "" {
@@ -147,6 +207,15 @@ func run(logger *zap.Logger) error {
 		MaxAge:           12 * time.Hour,
 	}
 	router.Use(cors.New(corsConfig))
+
+	// Security headers
+	router.Use(func(c *gin.Context) {
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-XSS-Protection", "1; mode=block")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Next()
+	})
 
 	// Request body size limit (1 MB)
 	router.Use(func(c *gin.Context) {
@@ -179,6 +248,7 @@ func run(logger *zap.Logger) error {
 	identityHandler.Register(v1)
 	ledgerHandler.Register(v1)
 	dnsHandler.Register(v1)
+	authHandler.Register(v1)
 
 	// ── TLS Server (mTLS) on port 8443 ────────────────────────────────────────
 	tlsEnabled := viper.GetBool("identity.tls_enabled")
@@ -187,7 +257,24 @@ func run(logger *zap.Logger) error {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	// Plain HTTP server (health + public API)
+	// ── Background: expire stale DNS challenges every 5 minutes ──────────────
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				if _, err := dnsSvc.DeleteExpired(ctx); err != nil {
+					logger.Warn("dns challenge cleanup error", zap.Error(err))
+				}
+				cancel()
+			case <-quit:
+				return
+			}
+		}
+	}()
+
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", httpPort),
 		Handler:           router,
@@ -201,7 +288,6 @@ func run(logger *zap.Logger) error {
 		}
 	}()
 
-	// TLS/mTLS server
 	var tlsSrv *http.Server
 	if tlsEnabled {
 		serverCert, err := issuer.IssueServerCert(

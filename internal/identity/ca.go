@@ -80,8 +80,8 @@ func (m *CAManager) Create() error {
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "Nexus Agentic Protocol CA",
-			Organization: []string{"Nexus Agentic Protocol"},
+			CommonName:   "Nexus Agent Protocol CA",
+			Organization: []string{"Nexus Agent Protocol"},
 			Country:      []string{"US"},
 		},
 		NotBefore:             time.Now().UTC().Add(-time.Minute),

@@ -50,7 +50,7 @@ type ActivationResult struct {
 // FreeTierConfig holds configuration for the NAP-hosted free tier.
 type FreeTierConfig struct {
 	TrustRoot string // e.g. "nexusagentprotocol.com"
-	MaxAgents int    // maximum agents per free-tier user (e.g. 3)
+	MaxAgents int    // maximum agents per free-tier user; 0 = unlimited
 }
 
 // agentRepo is the persistence interface for the agent service.
@@ -62,7 +62,8 @@ type agentRepo interface {
 	List(ctx context.Context, trustRoot, capNode string, limit, offset int) ([]*model.Agent, error)
 	ListByOwnerDomain(ctx context.Context, domain string, limit, offset int) ([]*model.Agent, error)
 	ListByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID, limit, offset int) ([]*model.Agent, error)
-	SearchByDomain(ctx context.Context, domain string, limit, offset int) ([]*model.Agent, error)
+	SearchByOrg(ctx context.Context, orgName string, limit, offset int) ([]*model.Agent, error)
+	SearchByCapability(ctx context.Context, capability, orgName string, limit, offset int) ([]*model.Agent, error)
 	CountByOwner(ctx context.Context, ownerUserID uuid.UUID) (int, error)
 	Update(ctx context.Context, agent *model.Agent) error
 	UpdateStatus(ctx context.Context, id uuid.UUID, status model.AgentStatus) error
@@ -103,7 +104,7 @@ func NewAgentService(repo agentRepo, issuer *identity.Issuer, ledger trustledger
 		issuer:      issuer,
 		ledger:      ledger,
 		dnsVerifier: dnsVerifier,
-		freeTier:    FreeTierConfig{TrustRoot: "nexusagentprotocol.com", MaxAgents: 3},
+		freeTier:    FreeTierConfig{TrustRoot: "nap", MaxAgents: 0}, // 0 = unlimited
 		logger:      logger,
 	}
 }
@@ -152,36 +153,54 @@ func (s *AgentService) Register(ctx context.Context, req *model.RegisterRequest)
 
 	var agent *model.Agent
 
+	// Resolve capability path: prefer explicit Capability field, then Category,
+	// then the legacy CapabilityNode field (converting "/" → ">").
+	capability := normalizeCapability(req.Capability)
+	if capability == "" {
+		capability = normalizeCapability(req.Category)
+	}
+	if capability == "" {
+		capability = normalizeCapability(req.CapabilityNode)
+	}
+
 	if req.RegistrationType == model.RegistrationTypeNAPHosted {
-		// NAP-hosted free tier: enforce trust root, namespace, and quota.
+		// NAP-hosted free tier.
+		// URI: agent://{trust_root}/{category}/{agent_id}
 		if req.OwnerUserID == nil {
 			return nil, fmt.Errorf("owner_user_id is required for nap_hosted registration")
 		}
 		if req.Username == "" {
 			return nil, fmt.Errorf("username is required for nap_hosted registration")
 		}
-
-		count, err := s.repo.CountByOwner(ctx, *req.OwnerUserID)
-		if err != nil {
-			return nil, fmt.Errorf("check agent quota: %w", err)
+		if capability == "" {
+			return nil, &model.ErrValidation{Msg: "capability is required for nap_hosted registration"}
 		}
-		max := s.freeTier.MaxAgents
-		if max <= 0 {
-			max = 3
-		}
-		if count >= max {
-			return nil, fmt.Errorf("free tier limit of %d agents reached", max)
+		if err := model.ValidateCapabilityNode(capability); err != nil {
+			return nil, &model.ErrValidation{Msg: err.Error()}
 		}
 
-		trustRoot := s.freeTier.TrustRoot
-		if trustRoot == "" {
-			trustRoot = "nexusagentprotocol.com"
+		// Quota check — only enforced when MaxAgents > 0.
+		// Currently set to 0 (unlimited) for all users.
+		// Future: set per-plan limits here based on user's subscription tier.
+		if s.freeTier.MaxAgents > 0 {
+			count, err := s.repo.CountByOwner(ctx, *req.OwnerUserID)
+			if err != nil {
+				return nil, fmt.Errorf("check agent quota: %w", err)
+			}
+			if count >= s.freeTier.MaxAgents {
+				return nil, fmt.Errorf("agent limit of %d reached for your current plan", s.freeTier.MaxAgents)
+			}
 		}
-		capNode := "hosted/" + req.Username
 
 		agent = &model.Agent{
-			TrustRoot:        trustRoot,
-			CapabilityNode:   capNode,
+			// trust_root = NAP-controlled namespace for all free-hosted agents.
+			// Using the username here would allow anyone to claim "amazon" or
+			// "google" as their org segment, making URIs indistinguishable from
+			// domain-verified agents. The FreeTierConfig.TrustRoot ("nap") is a
+			// registry-controlled namespace that callers can trust means
+			// "email-verified, not domain-verified".
+			TrustRoot:        s.freeTier.TrustRoot,
+			CapabilityNode:   capability, // full path e.g. "finance>accounting>reconciliation"
 			AgentID:          agentID,
 			DisplayName:      req.DisplayName,
 			Description:      req.Description,
@@ -194,21 +213,27 @@ func (s *AgentService) Register(ctx context.Context, req *model.RegisterRequest)
 		}
 	} else {
 		// Domain-verified path.
-		if req.TrustRoot == "" {
-			return nil, fmt.Errorf("trust_root is required for domain registration")
+		// URI: agent://{owner_domain}/{category}/{agent_id}
+		// The full verified domain is the org segment — unambiguous and proven
+		// by DNS-01 challenge, so agent://amazon.com/… can only be Amazon.
+		ownerDomain := strings.ToLower(strings.TrimSpace(req.OwnerDomain))
+		if ownerDomain == "" {
+			return nil, &model.ErrValidation{Msg: "owner_domain is required for domain registration"}
 		}
-		if req.CapabilityNode == "" {
-			return nil, fmt.Errorf("capability_node is required for domain registration")
+		if capability == "" {
+			return nil, &model.ErrValidation{Msg: "capability is required for domain registration"}
 		}
 		if req.Endpoint == "" {
-			return nil, fmt.Errorf("endpoint is required for domain registration")
+			return nil, &model.ErrValidation{Msg: "endpoint is required for domain registration"}
+		}
+		if err := model.ValidateCapabilityNode(capability); err != nil {
+			return nil, &model.ErrValidation{Msg: err.Error()}
 		}
 
-		capNode := normalizeCapabilityNode(req.CapabilityNode)
-
 		agent = &model.Agent{
-			TrustRoot:        req.TrustRoot,
-			CapabilityNode:   capNode,
+			// trust_root = verified domain; DNS-01 proves the registrant owns it.
+			TrustRoot:        ownerDomain,
+			CapabilityNode:   capability, // full path e.g. "finance>accounting>reconciliation"
 			AgentID:          agentID,
 			DisplayName:      req.DisplayName,
 			Description:      req.Description,
@@ -230,7 +255,7 @@ func (s *AgentService) Register(ctx context.Context, req *model.RegisterRequest)
 	s.logger.Info("agent registered",
 		zap.String("agent_id", agentID),
 		zap.String("trust_root", agent.TrustRoot),
-		zap.String("capability_node", agent.CapabilityNode),
+		zap.String("capability", agent.CapabilityNode),
 		zap.String("registration_type", agent.RegistrationType),
 	)
 
@@ -255,8 +280,11 @@ func (s *AgentService) Get(ctx context.Context, id uuid.UUID) (*model.Agent, err
 }
 
 // Resolve looks up an active agent by its URI components.
+// capNode is the top-level category from the URI (e.g. "finance").
+// The repository does prefix matching so agents stored as "finance>accounting>..."
+// are correctly found.
 func (s *AgentService) Resolve(ctx context.Context, trustRoot, capNode, agentID string) (*model.Agent, error) {
-	agent, err := s.repo.GetByAgentID(ctx, trustRoot, normalizeCapabilityNode(capNode), agentID)
+	agent, err := s.repo.GetByAgentID(ctx, trustRoot, normalizeCapability(capNode), agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -292,6 +320,18 @@ func (s *AgentService) Update(ctx context.Context, id uuid.UUID, req *model.Upda
 	}
 	if req.Metadata != nil {
 		agent.Metadata = req.Metadata
+	}
+	if req.Version != "" {
+		agent.Version = req.Version
+	}
+	if req.Tags != nil {
+		agent.Tags = req.Tags
+	}
+	if req.SupportURL != "" {
+		agent.SupportURL = req.SupportURL
+	}
+	if req.PricingInfo != "" {
+		agent.PricingInfo = req.PricingInfo
 	}
 
 	if err := s.repo.Update(ctx, agent); err != nil {
@@ -419,11 +459,19 @@ func (s *AgentService) ListByOwnerUserID(ctx context.Context, ownerUserID uuid.U
 	return s.repo.ListByOwnerUserID(ctx, ownerUserID, limit, offset)
 }
 
-// LookupByDomain returns active, domain-verified agents registered under the
-// given trust root domain. This is the primary discovery path: a caller
-// supplies a domain name and gets back all the verified agents it hosts.
-func (s *AgentService) LookupByDomain(ctx context.Context, domain string, limit, offset int) ([]*model.Agent, error) {
-	return s.repo.SearchByDomain(ctx, domain, limit, offset)
+// LookupByOrg returns all active agents registered under the given org namespace.
+// The org is the first URI segment: the full verified domain for domain-verified agents
+// (e.g. "acme.com" in agent://acme.com/finance/agent_xyz), or "nap" for free-hosted.
+func (s *AgentService) LookupByOrg(ctx context.Context, orgName string, limit, offset int) ([]*model.Agent, error) {
+	return s.repo.SearchByOrg(ctx, orgName, limit, offset)
+}
+
+// LookupByCapability returns active agents whose capability_node matches the
+// given capability prefix (exact or hierarchical child). An optional orgName
+// further restricts results to a single org namespace. Results are ordered by
+// effective trust tier so the most trustworthy agents appear first.
+func (s *AgentService) LookupByCapability(ctx context.Context, capability, orgName string, limit, offset int) ([]*model.Agent, error) {
+	return s.repo.SearchByCapability(ctx, capability, orgName, limit, offset)
 }
 
 // Delete permanently removes an agent record.
@@ -448,9 +496,13 @@ func generateAgentID() (string, error) {
 	return "agent_" + strings.ToLower(encoded), nil
 }
 
-// normalizeCapabilityNode removes leading/trailing slashes and lowercases.
-func normalizeCapabilityNode(cap string) string {
-	return strings.ToLower(strings.Trim(cap, "/"))
+// normalizeCapability lowercases the capability string, trims whitespace, and
+// converts the legacy "/" separator to ">" for backward compatibility.
+func normalizeCapability(cap string) string {
+	cap = strings.ToLower(strings.TrimSpace(cap))
+	cap = strings.ReplaceAll(cap, "/", ">")
+	cap = strings.Trim(cap, ">")
+	return cap
 }
 
 // generateAgentCard builds and returns a JSON-encoded A2A-compatible agent card

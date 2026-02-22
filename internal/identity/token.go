@@ -108,3 +108,43 @@ func (t *TokenIssuer) PublicKeyPEM() (string, error) {
 
 // TTL returns the configured token lifetime.
 func (t *TokenIssuer) TTL() time.Duration { return t.ttl }
+
+// NAPEndorsementClaims are the JWT claims for a NAP agent endorsement.
+// The endorsement is embedded in the agent's A2A card (nap:endorsement field)
+// and can be verified by any party with access to the registry's JWKS endpoint.
+type NAPEndorsementClaims struct {
+	jwt.RegisteredClaims
+	AgentURI   string `json:"nap:uri"`
+	TrustTier  string `json:"nap:trust_tier"`
+	CertSerial string `json:"nap:cert_serial,omitempty"`
+	Registry   string `json:"nap:registry"`
+}
+
+// IssueEndorsement creates a signed NAP endorsement JWT for an agent.
+// The JWT is intended for embedding in an A2A agent card as the nap:endorsement field.
+// validFor defaults to 365 days when zero.
+func (t *TokenIssuer) IssueEndorsement(agentURI, trustTier, certSerial, registry string, validFor time.Duration) (string, error) {
+	if validFor == 0 {
+		validFor = 365 * 24 * time.Hour
+	}
+	now := time.Now().UTC()
+	claims := NAPEndorsementClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    t.issuer,
+			Subject:   agentURI,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(validFor)),
+			ID:        uuid.New().String(),
+		},
+		AgentURI:   agentURI,
+		TrustTier:  trustTier,
+		CertSerial: certSerial,
+		Registry:   registry,
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	signed, err := token.SignedString(t.key)
+	if err != nil {
+		return "", fmt.Errorf("sign endorsement: %w", err)
+	}
+	return signed, nil
+}

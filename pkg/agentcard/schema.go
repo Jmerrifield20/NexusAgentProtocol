@@ -51,6 +51,48 @@ type AgentEntry struct {
 	CapabilityNode string            `json:"capability_node"`
 	Status         string            `json:"status"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
+	// NAP extension field — computed at read time, never stored.
+	NAPTrustTier string `json:"nap:trust_tier,omitempty"`
+}
+
+// A2ACapabilities describes the A2A protocol streaming / notification capabilities
+// declared by an agent. All fields default to false.
+type A2ACapabilities struct {
+	Streaming              bool `json:"streaming"`
+	PushNotifications      bool `json:"pushNotifications"`
+	StateTransitionHistory bool `json:"stateTransitionHistory"`
+}
+
+// A2ASkill describes a single capability or task type the agent supports.
+type A2ASkill struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+}
+
+// A2ACard is an A2A-compatible agent card that also carries NAP extension fields.
+//
+// Deploy this file at https://yourdomain/.well-known/agent.json so that
+// A2A-aware clients can discover the agent. NAP-aware clients additionally
+// verify the nap:endorsement JWT using the registry's JWKS endpoint.
+//
+// A2A clients ignore unknown "nap:*" fields per JSON extensibility rules.
+type A2ACard struct {
+	// Standard A2A fields (per the Google Agent2Agent spec).
+	Name         string          `json:"name"`
+	Description  string          `json:"description,omitempty"`
+	URL          string          `json:"url"`
+	Version      string          `json:"version"`
+	Capabilities A2ACapabilities `json:"capabilities"`
+	Skills       []A2ASkill      `json:"skills,omitempty"`
+
+	// NAP extension fields — ignored by plain A2A clients.
+	NAPURI         string `json:"nap:uri"`
+	NAPTrustTier   string `json:"nap:trust_tier"`
+	NAPRegistry    string `json:"nap:registry"`
+	NAPCertSerial  string `json:"nap:cert_serial,omitempty"`
+	NAPEndorsement string `json:"nap:endorsement,omitempty"`
 }
 
 // Parse decodes an AgentCard from JSON bytes.

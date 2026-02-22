@@ -11,13 +11,13 @@ import (
 func newTestTokenIssuer(t *testing.T) *identity.TokenIssuer {
 	t.Helper()
 	ca := newTestCA(t) // reuse CA helper from ca_test.go
-	return identity.NewTokenIssuer(ca.Key(), "https://registry.nexus.io", time.Hour)
+	return identity.NewTokenIssuer(ca.Key(), "https://registry.nexusagentprotocol.com", time.Hour)
 }
 
 func TestTokenIssuer_Issue(t *testing.T) {
 	ti := newTestTokenIssuer(t)
 
-	token, err := ti.Issue("agent://nexus.io/finance/taxes/agent_abc", []string{"agent:resolve", "agent:call"})
+	token, err := ti.Issue("agent://nexusagentprotocol.com/finance/taxes/agent_abc", []string{"agent:resolve", "agent:call"})
 	if err != nil {
 		t.Fatalf("Issue() error: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestTokenIssuer_Issue(t *testing.T) {
 
 func TestTokenIssuer_Verify_valid(t *testing.T) {
 	ti := newTestTokenIssuer(t)
-	agentURI := "agent://nexus.io/assistant/agent_xyz"
+	agentURI := "agent://nexusagentprotocol.com/assistant/agent_xyz"
 	scopes := []string{"agent:resolve"}
 
 	token, err := ti.Issue(agentURI, scopes)
@@ -57,9 +57,9 @@ func TestTokenIssuer_Verify_valid(t *testing.T) {
 func TestTokenIssuer_Verify_expired(t *testing.T) {
 	ca := newTestCA(t)
 	// Issue a token with a 1-nanosecond TTL — it will be expired by the time we verify.
-	ti := identity.NewTokenIssuer(ca.Key(), "https://registry.nexus.io", time.Nanosecond)
+	ti := identity.NewTokenIssuer(ca.Key(), "https://registry.nexusagentprotocol.com", time.Nanosecond)
 
-	token, err := ti.Issue("agent://nexus.io/a/agent_x", nil)
+	token, err := ti.Issue("agent://nexusagentprotocol.com/a/agent_x", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestTokenIssuer_Verify_expired(t *testing.T) {
 func TestTokenIssuer_Verify_tamperedSignature(t *testing.T) {
 	ti := newTestTokenIssuer(t)
 
-	token, _ := ti.Issue("agent://nexus.io/a/agent_x", nil)
+	token, _ := ti.Issue("agent://nexusagentprotocol.com/a/agent_x", nil)
 	// Flip a mid-signature character to corrupt the decoded bytes.
 	// The last character must not be flipped: for a 4096-bit RSA key the
 	// 512-byte signature encodes to base64url with 4 padding bits in the
@@ -98,10 +98,10 @@ func TestTokenIssuer_Verify_tamperedSignature(t *testing.T) {
 
 func TestTokenIssuer_Verify_wrongIssuer(t *testing.T) {
 	ca := newTestCA(t)
-	ti1 := identity.NewTokenIssuer(ca.Key(), "https://registry-a.nexus.io", time.Hour)
-	ti2 := identity.NewTokenIssuer(ca.Key(), "https://registry-b.nexus.io", time.Hour)
+	ti1 := identity.NewTokenIssuer(ca.Key(), "https://registry-a.nexusagentprotocol.com", time.Hour)
+	ti2 := identity.NewTokenIssuer(ca.Key(), "https://registry-b.nexusagentprotocol.com", time.Hour)
 
-	token, _ := ti1.Issue("agent://nexus.io/a/agent_x", nil)
+	token, _ := ti1.Issue("agent://nexusagentprotocol.com/a/agent_x", nil)
 	_, err := ti2.Verify(token)
 	if err == nil {
 		t.Error("expected error for wrong issuer, got nil")
@@ -121,7 +121,7 @@ func TestTokenIssuer_PublicKeyPEM(t *testing.T) {
 
 func TestHasScope(t *testing.T) {
 	ti := newTestTokenIssuer(t)
-	token, _ := ti.Issue("agent://nexus.io/a/agent_x", []string{"agent:resolve", "agent:call"})
+	token, _ := ti.Issue("agent://nexusagentprotocol.com/a/agent_x", []string{"agent:resolve", "agent:call"})
 	claims, _ := ti.Verify(token)
 
 	if !identity.HasScope(claims, "agent:resolve") {

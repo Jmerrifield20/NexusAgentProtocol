@@ -1,4 +1,4 @@
-# Contributing to Nexus Agentic Protocol
+# Contributing to Nexus Agent Protocol
 
 Thank you for your interest in contributing to NAP! This guide explains the process for contributing to this project.
 

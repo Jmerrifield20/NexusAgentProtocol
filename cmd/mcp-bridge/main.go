@@ -1,4 +1,4 @@
-// nap-mcp-bridge exposes the Nexus Agentic Protocol as MCP tools, allowing
+// nap-mcp-bridge exposes the Nexus Agent Protocol as MCP tools, allowing
 // Claude Desktop and any MCP-compatible AI host to discover and call NAP agents.
 //
 // Add to Claude Desktop (~/.claude/claude_desktop_config.json):
@@ -7,7 +7,7 @@
 //	  "mcpServers": {
 //	    "nap": {
 //	      "command": "/path/to/nap-mcp-bridge",
-//	      "args": ["--registry", "https://registry.nexus.io"]
+//	      "args": ["--registry", "https://registry.nexusagentprotocol.com"]
 //	    }
 //	  }
 //	}
@@ -15,7 +15,7 @@
 // To also enable agent-calling (requires a cert from 'nap claim'):
 //
 //	"args": [
-//	  "--registry", "https://registry.nexus.io",
+//	  "--registry", "https://registry.nexusagentprotocol.com",
 //	  "--cert-dir", "/Users/you/.nap/certs/example.com"
 //	]
 package main
@@ -46,7 +46,7 @@ func main() {
 
 var rootCmd = &cobra.Command{
 	Use:   "nap-mcp-bridge",
-	Short: "MCP bridge for the Nexus Agentic Protocol",
+	Short: "MCP bridge for the Nexus Agent Protocol",
 	Long: `nap-mcp-bridge is a stdio MCP server that exposes four NAP tools to any
 MCP-compatible AI host (Claude Desktop, Claude API, etc.):
 
@@ -62,7 +62,7 @@ All logging goes to stderr so it does not interfere with the protocol.`,
 }
 
 func init() {
-	rootCmd.Flags().StringVar(&registryURL, "registry", "https://registry.nexus.io", "Nexus registry URL")
+	rootCmd.Flags().StringVar(&registryURL, "registry", "https://registry.nexusagentprotocol.com", "Nexus registry URL")
 	rootCmd.Flags().StringVar(&certDir, "cert-dir", "", "Certificate directory written by 'nap claim' (enables mTLS + agent calling)")
 	rootCmd.Flags().BoolVar(&insecure, "insecure", false, "Skip TLS certificate verification (development only)")
 	rootCmd.Flags().IntVar(&cacheTTLSec, "cache-ttl", 60, "URI resolution cache TTL in seconds (0 = disabled)")

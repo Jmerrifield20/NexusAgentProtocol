@@ -1,4 +1,4 @@
-# Nexus Agentic Protocol (NAP)
+# Nexus Agent Protocol (NAP)
 
 > A open standard for agent identity, discovery, and authenticated agent-to-agent communication over the internet.
 
@@ -34,7 +34,7 @@ NAP is the only protocol that combines a central registry, DNS-01 domain ownersh
 Every NAP agent has a permanent, human-readable address:
 
 ```
-agent://nexus.io/ecommerce/retail/agent_7x2v9qaabbccdd
+agent://nexusagentprotocol.com/ecommerce/retail/agent_7x2v9qaabbccdd
          ────────  ────────────────  ──────────────────
          trust      capability node    unique agent ID
          root       (hierarchy)
@@ -42,7 +42,7 @@ agent://nexus.io/ecommerce/retail/agent_7x2v9qaabbccdd
 
 | Part | Meaning |
 |------|---------|
-| `nexus.io` | Trust root — the registry that issued the identity |
+| `nexusagentprotocol.com` | Trust root — the registry that issued the identity |
 | `ecommerce/retail` | Capability node — what the agent does (hierarchical) |
 | `agent_7x2v9q…` | Unique agent ID assigned at registration |
 
@@ -80,7 +80,7 @@ https://example.com/.well-known/agent-card.json
 This lists all active agents for that domain. The Nexus registry also serves this on behalf of registered domains at:
 
 ```
-https://registry.nexus.io/.well-known/agent-card.json?domain=example.com
+https://registry.nexusagentprotocol.com/.well-known/agent-card.json?domain=example.com
 ```
 
 **Example agent-card.json:**
@@ -89,11 +89,11 @@ https://registry.nexus.io/.well-known/agent-card.json?domain=example.com
 {
   "schema_version": "1.0",
   "domain": "example.com",
-  "trust_root": "nexus.io",
+  "trust_root": "nexusagentprotocol.com",
   "updated_at": "2026-02-20T12:00:00Z",
   "agents": [
     {
-      "uri": "agent://nexus.io/ecommerce/retail/agent_7x2v9q",
+      "uri": "agent://nexusagentprotocol.com/ecommerce/retail/agent_7x2v9q",
       "display_name": "Acme Store",
       "description": "Handles orders, inventory, and invoicing for Acme.",
       "endpoint": "https://agents.example.com",
@@ -143,7 +143,7 @@ Use the `nap` CLI:
 
 ```bash
 nap claim yourdomain.com \
-  --registry https://registry.nexus.io \
+  --registry https://registry.nexusagentprotocol.com \
   --capability "assistant/general" \
   --name "My Bot" \
   --endpoint https://yourdomain.com/agent
@@ -175,7 +175,7 @@ import (
 func main() {
     // Load certs written by 'nap claim'
     c, err := client.NewFromCertDir(
-        "https://registry.nexus.io",
+        "https://registry.nexusagentprotocol.com",
         os.ExpandEnv("$HOME/.nap/certs/yourdomain.com"),
     )
     if err != nil {
@@ -187,7 +187,7 @@ func main() {
     // Call any other NAP agent — resolve + auth + call in one step
     var reply map[string]any
     err = c.CallAgent(ctx,
-        "agent://nexus.io/finance/billing/agent_7x2v9q",
+        "agent://nexusagentprotocol.com/finance/billing/agent_7x2v9q",
         http.MethodPost, "/v1/invoice",
         map[string]any{"amount": 100, "currency": "USD"},
         &reply,
@@ -216,13 +216,13 @@ router := gin.New()
 router.POST("/agent/*path", identity.RequireToken(oidcIssuerURL), yourHandler)
 ```
 
-The JWKS endpoint is `https://registry.nexus.io/.well-known/jwks.json`.
+The JWKS endpoint is `https://registry.nexusagentprotocol.com/.well-known/jwks.json`.
 
 ---
 
 ## API Reference (Registry)
 
-All endpoints are on the Nexus registry at `https://registry.nexus.io`.
+All endpoints are on the Nexus registry at `https://registry.nexusagentprotocol.com`.
 
 ### Agent Discovery
 
@@ -270,13 +270,13 @@ All endpoints are on the Nexus registry at `https://registry.nexus.io`.
 
 ```go
 // Connect (unauthenticated — for resolution only)
-c, err := client.New("https://registry.nexus.io")
+c, err := client.New("https://registry.nexusagentprotocol.com")
 
 // Connect (authenticated — load certs from disk)
 c, err := client.NewFromCertDir(registryURL, "~/.nap/certs/yourdomain.com")
 
 // Resolve a URI to an endpoint
-result, err := c.Resolve(ctx, "agent://nexus.io/finance/billing/agent_7x2v9q")
+result, err := c.Resolve(ctx, "agent://nexusagentprotocol.com/finance/billing/agent_7x2v9q")
 // result.Endpoint → "https://billing.example.com"
 
 // Call another agent (resolve + auth + HTTP in one step)
@@ -293,7 +293,7 @@ certs, err := c.ActivateAgent(ctx, agent.ID)
 // certs.PrivateKeyPEM is delivered once and never stored by the registry
 
 // List agents
-agents, err := c.ListAgents(ctx, "nexus.io", "ecommerce")
+agents, err := c.ListAgents(ctx, "nexusagentprotocol.com", "ecommerce")
 ```
 
 ---
@@ -309,7 +309,7 @@ If your bot is Claude-based, you can expose NAP as MCP tools without writing any
     "nap": {
       "command": "/path/to/nap-mcp-bridge",
       "args": [
-        "--registry", "https://registry.nexus.io",
+        "--registry", "https://registry.nexusagentprotocol.com",
         "--cert-dir", "/Users/you/.nap/certs/yourdomain.com"
       ]
     }
@@ -375,7 +375,7 @@ The genesis entry has hash `0000…0000` (64 zeros). Every subsequent entry hash
 Verify the ledger at any time:
 
 ```bash
-curl https://registry.nexus.io/api/v1/ledger/verify
+curl https://registry.nexusagentprotocol.com/api/v1/ledger/verify
 # {"valid": true, "length": 42, "root": "a3f2..."}
 ```
 

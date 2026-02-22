@@ -3,17 +3,17 @@ info:
   title: Nexus Agent Registry API
   description: |
     REST API for registering, resolving, and revoking agents on the
-    Nexus Agentic Protocol (NAP) registry.
+    Nexus Agent Protocol (NAP) registry.
   version: "0.1.0"
   contact:
     name: Nexus Project Team
-    url: https://nexus.io
+    url: https://nexusagentprotocol.com
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
 
 servers:
-  - url: https://registry.nexus.io/api/v1
+  - url: https://registry.nexusagentprotocol.com/api/v1
     description: Production registry
   - url: http://localhost:8080/api/v1
     description: Local development
@@ -211,7 +211,7 @@ paths:
           required: true
           schema:
             type: string
-          example: nexus.io
+          example: nexusagentprotocol.com
         - name: capability_node
           in: query
           required: true
@@ -262,7 +262,7 @@ components:
           format: uuid
         trust_root:
           type: string
-          example: nexus.io
+          example: nexusagentprotocol.com
         capability_node:
           type: string
           example: finance/taxes
@@ -302,7 +302,7 @@ components:
       properties:
         trust_root:
           type: string
-          example: nexus.io
+          example: nexusagentprotocol.com
         capability_node:
           type: string
           example: finance/taxes
@@ -344,7 +344,7 @@ components:
       properties:
         uri:
           type: string
-          example: "agent://nexus.io/finance/taxes/agent_7x2v9q"
+          example: "agent://nexusagentprotocol.com/finance/taxes/agent_7x2v9q"
         endpoint:
           type: string
           format: uri

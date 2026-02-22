@@ -35,8 +35,8 @@ func main() {
 
 var rootCmd = &cobra.Command{
 	Use:   "nap",
-	Short: "Nexus Agentic Protocol CLI",
-	Long: `nap is the command-line interface for the Nexus Agentic Protocol.
+	Short: "Nexus Agent Protocol CLI",
+	Long: `nap is the command-line interface for the Nexus Agent Protocol.
 
 It allows you to register agents, resolve agent:// URIs, and manage
 your agent registrations on a Nexus registry.`,
@@ -56,14 +56,14 @@ your agent registrations on a Nexus registry.`,
 			registryURL = viper.GetString("registry_url")
 		}
 		if registryURL == "" {
-			registryURL = "https://registry.nexus.io"
+			registryURL = "https://registry.nexusagentprotocol.com"
 		}
 	},
 }
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default ~/.nap/config.yaml)")
-	rootCmd.PersistentFlags().StringVar(&registryURL, "registry", "", "Nexus registry URL (default https://registry.nexus.io)")
+	rootCmd.PersistentFlags().StringVar(&registryURL, "registry", "", "Nexus registry URL (default https://registry.nexusagentprotocol.com)")
 
 	rootCmd.AddCommand(resolveCmd)
 	rootCmd.AddCommand(registerCmd)
@@ -97,11 +97,11 @@ var resolveCmd = &cobra.Command{
 By default it queries the registry directly. Use --resolver to target the
 dedicated resolver service, which maintains a warm endpoint cache:
 
-  nap resolve --resolver http://localhost:9091 agent://nexus.io/finance/taxes/agent_abc
+  nap resolve --resolver http://localhost:9091 agent://nexusagentprotocol.com/finance/taxes/agent_abc
 
 Multiple URIs are resolved concurrently and displayed as a table:
 
-  nap resolve agent://nexus.io/a/agent_1 agent://nexus.io/b/agent_2`,
+  nap resolve agent://nexusagentprotocol.com/a/agent_1 agent://nexusagentprotocol.com/b/agent_2`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runResolve,
 }
@@ -273,7 +273,7 @@ var registerCmd = &cobra.Command{
 }
 
 func init() {
-	registerCmd.Flags().StringVar(&regTrustRoot, "trust-root", "nexus.io", "Trust root (registry hostname)")
+	registerCmd.Flags().StringVar(&regTrustRoot, "trust-root", "nexusagentprotocol.com", "Trust root (registry hostname)")
 	registerCmd.Flags().StringVar(&regCapNode, "capability", "", "Capability node path (e.g. finance/taxes)")
 	registerCmd.Flags().StringVar(&regDisplayName, "name", "", "Display name for the agent")
 	registerCmd.Flags().StringVar(&regDescription, "description", "", "Agent description")
@@ -324,7 +324,7 @@ func init() {
 	claimCmd.Flags().StringVar(&claimName, "name", "", "Display name for the agent")
 	claimCmd.Flags().StringVar(&claimDescription, "description", "", "Agent description")
 	claimCmd.Flags().StringVar(&claimEndpoint, "endpoint", "", "Agent transport endpoint URL")
-	claimCmd.Flags().StringVar(&claimTrustRoot, "trust-root", "nexus.io", "Trust root hostname")
+	claimCmd.Flags().StringVar(&claimTrustRoot, "trust-root", "nexusagentprotocol.com", "Trust root hostname")
 	claimCmd.Flags().StringVar(&claimOutputDir, "output", "", "Certificate output directory (default ~/.nap/certs/<domain>/)")
 	claimCmd.Flags().IntVar(&claimTimeoutMin, "timeout", 10, "DNS polling timeout in minutes")
 	claimCmd.Flags().BoolVar(&claimInsecure, "insecure", false, "Skip TLS certificate verification (development only)")
@@ -342,7 +342,7 @@ func runClaim(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Found agent-card.json with %d agent(s) on %s\n\n", len(card.Agents), domain)
 		for _, e := range card.Agents {
 			trustRoot := card.TrustRoot
-			if claimTrustRoot != "nexus.io" { // user explicitly overrode it
+			if claimTrustRoot != "nexusagentprotocol.com" { // user explicitly overrode it
 				trustRoot = claimTrustRoot
 			}
 			specs = append(specs, agentSpec{
@@ -552,7 +552,7 @@ Examples:
   nap revoke 550e8400-e29b-41d4-a716-446655440000
 
   # Revoke by agent:// URI with an explicit JWT
-  nap revoke --token eyJhbG... agent://nexus.io/finance/taxes/agent_abc
+  nap revoke --token eyJhbG... agent://nexusagentprotocol.com/finance/taxes/agent_abc
 
   # Revoke with explicit cert files, skip confirmation
   nap revoke --cert cert.pem --key key.pem --ca ca.pem --force <uuid>`,
@@ -724,7 +724,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the nap CLI version",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("nap %s (Nexus Agentic Protocol)\n", version)
+		fmt.Printf("nap %s (Nexus Agent Protocol)\n", version)
 	},
 }
 

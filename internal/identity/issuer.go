@@ -48,7 +48,7 @@ func (i *Issuer) CACertPEM() string {
 //
 // The certificate contains:
 //   - Subject CN: ownerDomain
-//   - URI SAN: agentURI  (e.g. agent://nexus.io/finance/taxes/agent_xyz)
+//   - URI SAN: agentURI  (e.g. agent://nexusagentprotocol.com/finance/taxes/agent_xyz)
 //   - DNS SAN: ownerDomain
 //   - EKU: ClientAuth + ServerAuth
 func (i *Issuer) IssueAgentCert(agentURI, ownerDomain string, validFor time.Duration) (*IssuedCert, error) {
@@ -79,7 +79,7 @@ func (i *Issuer) IssueAgentCert(agentURI, ownerDomain string, validFor time.Dura
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:   ownerDomain,
-			Organization: []string{"Nexus Agentic Protocol"},
+			Organization: []string{"Nexus Agent Protocol"},
 		},
 		NotBefore:   now.Add(-time.Minute),
 		NotAfter:    now.Add(validFor),
@@ -116,7 +116,7 @@ func (i *Issuer) IssueServerCert(dnsNames []string, ips []net.IP, validFor time.
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:   "Nexus Registry",
-			Organization: []string{"Nexus Agentic Protocol"},
+			Organization: []string{"Nexus Agent Protocol"},
 		},
 		NotBefore:   now.Add(-time.Minute),
 		NotAfter:    now.Add(validFor),

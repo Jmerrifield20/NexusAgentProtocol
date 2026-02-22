@@ -1,7 +1,7 @@
 //go:build ignore
 
 // probe-agent-cards.go checks a list of domains for /.well-known/agent-card.json
-// and related agentic discovery endpoints.
+// and related agent discovery endpoints.
 //
 // Run with: go run scripts/probe-agent-cards.go
 package main
@@ -82,7 +82,7 @@ func probe(domain, path string, client *http.Client) result {
 	if err != nil {
 		return result{domain: domain, path: path, err: err.Error()}
 	}
-	req.Header.Set("User-Agent", "NAP-Probe/0.1 (agent-card discovery; +https://nexus.io)")
+	req.Header.Set("User-Agent", "NAP-Probe/0.1 (agent-card discovery; +https://nexusagentprotocol.com)")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := client.Do(req)

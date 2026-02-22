@@ -1,0 +1,36 @@
+{
+  "name": "@openclaw/nap",
+  "version": "0.1.0",
+  "description": "Nexus Agent Protocol (NAP) integration for OpenClaw Gateway",
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./gateway": "./dist/gateway.js",
+    "./register": "./dist/register.js",
+    "./onboard": "./dist/onboard.js",
+    "./types": "./dist/types.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "lint": "eslint src",
+    "test": "node --test dist/*.test.js"
+  },
+  "keywords": [
+    "openclaw",
+    "nap",
+    "nexus-agent-protocol",
+    "a2a",
+    "agent-registry"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.4.0"
+  }
+}

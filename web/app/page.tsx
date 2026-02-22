@@ -52,12 +52,13 @@ export default function HomePage() {
           browser resolves a domain name to an IP address.
         </p>
         <p className="text-gray-600 leading-relaxed">
-          Before an agent gets an address, Nexus verifies that you actually own the domain it lives
-          under. This means every{" "}
+          Before an agent gets an address, Nexus verifies your identity. Domain-verified agents prove
+          they own the domain via a DNS challenge — the same mechanism Let&apos;s Encrypt uses. Free-hosted
+          agents are verified by email. Either way, every{" "}
           <code className="rounded bg-gray-100 px-1.5 py-0.5 text-sm font-mono text-nexus-500">
             agent://
           </code>{" "}
-          URI you encounter is backed by a real, verified identity — not just a string anyone could make up.
+          URI is backed by a confirmed identity — not just a string anyone could make up.
         </p>
       </section>
 
@@ -95,39 +96,39 @@ export default function HomePage() {
             {/* Agent A */}
             <rect x="28" y="72" width="158" height="72" rx="10" fill="white" stroke="#e0e7ff" strokeWidth="1.5" filter="url(#f1s)"/>
             <text x="107" y="104" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="13" fontWeight="600" fill="#1e1b4b">Agent A</text>
-            <text x="107" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">acme.com/accounting</text>
+            <text x="107" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">agent://acme.com/finance/…</text>
 
             {/* Nexus Registry */}
             <rect x="311" y="52" width="158" height="112" rx="10" fill="#1e1b4b" filter="url(#f1g)"/>
             <text x="390" y="100" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="13" fontWeight="700" fill="white">Nexus Registry</text>
-            <text x="390" y="120" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#818cf8">Federated Authority</text>
+            <text x="390" y="120" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#818cf8">Trust Registry</text>
             <rect x="338" y="133" width="104" height="18" rx="9" fill="#2d2a5e"/>
-            <text x="390" y="146" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9" fill="#a5b4fc">DNS-01 · X.509 · Ledger</text>
+            <text x="390" y="146" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9" fill="#a5b4fc">DNS-01 · Email · Ledger</text>
 
             {/* Agent B */}
             <rect x="594" y="72" width="158" height="72" rx="10" fill="white" stroke="#e0e7ff" strokeWidth="1.5" filter="url(#f1s)"/>
             <text x="673" y="104" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="13" fontWeight="600" fill="#1e1b4b">Agent B</text>
-            <text x="673" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">nexus.com/accounting</text>
+            <text x="673" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">agent://nexus.io/finance/…</text>
 
             {/* A → Registry: register */}
             <line x1="188" y1="100" x2="309" y2="100" stroke="#4f46e5" strokeWidth="1.5" strokeDasharray="5,3" markerEnd="url(#m1i)"/>
             <rect x="196" y="84" width="106" height="16" rx="8" fill="white" stroke="#e0e7ff" strokeWidth="1"/>
-            <text x="249" y="96" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9.5" fill="#4f46e5">Register + DNS verify</text>
+            <text x="249" y="96" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9.5" fill="#4f46e5">Register + verify</text>
 
-            {/* Registry → A: cert */}
+            {/* Registry → A: endorsement */}
             <line x1="309" y1="126" x2="188" y2="126" stroke="#16a34a" strokeWidth="1.5" markerEnd="url(#m1g)"/>
             <rect x="196" y="130" width="106" height="16" rx="8" fill="white" stroke="#dcfce7" strokeWidth="1"/>
-            <text x="249" y="142" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9.5" fill="#16a34a">X.509 cert issued</text>
+            <text x="249" y="142" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9.5" fill="#16a34a">NAP Endorsement</text>
 
             {/* B → Registry: register */}
             <line x1="592" y1="100" x2="471" y2="100" stroke="#4f46e5" strokeWidth="1.5" strokeDasharray="5,3" markerEnd="url(#m1i)"/>
             <rect x="478" y="84" width="106" height="16" rx="8" fill="white" stroke="#e0e7ff" strokeWidth="1"/>
-            <text x="531" y="96" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9.5" fill="#4f46e5">Register + DNS verify</text>
+            <text x="531" y="96" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9.5" fill="#4f46e5">Register + verify</text>
 
-            {/* Registry → B: cert */}
+            {/* Registry → B: endorsement */}
             <line x1="471" y1="126" x2="592" y2="126" stroke="#16a34a" strokeWidth="1.5" markerEnd="url(#m1g)"/>
             <rect x="478" y="130" width="106" height="16" rx="8" fill="white" stroke="#dcfce7" strokeWidth="1"/>
-            <text x="531" y="142" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9.5" fill="#16a34a">X.509 cert issued</text>
+            <text x="531" y="142" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9.5" fill="#16a34a">NAP Endorsement</text>
           </svg>
         </div>
 
@@ -135,6 +136,9 @@ export default function HomePage() {
         <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
           <p className="mb-5 text-xs font-semibold uppercase tracking-widest text-gray-400">
             Phase 2 — Discovery &amp; Direct Communication
+          </p>
+          <p className="mb-4 text-xs text-gray-400">
+            Note: Agent A does not need to be registered with NAP to look up Agent B. Any HTTP client can resolve an <code className="font-mono">agent://</code> URI — registration is only required to be <em>discoverable</em>, not to discover others.
           </p>
           <svg viewBox="0 0 780 235" className="w-full" aria-label="Discovery and call diagram">
             <defs>
@@ -161,19 +165,19 @@ export default function HomePage() {
             {/* Agent A */}
             <rect x="28" y="72" width="158" height="72" rx="10" fill="white" stroke="#e0e7ff" strokeWidth="1.5" filter="url(#f2s)"/>
             <text x="107" y="104" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="13" fontWeight="600" fill="#1e1b4b">Agent A</text>
-            <text x="107" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">acme.com/accounting</text>
+            <text x="107" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">agent://acme.com/finance/…</text>
 
             {/* Nexus Registry */}
             <rect x="311" y="52" width="158" height="112" rx="10" fill="#1e1b4b" filter="url(#f2g)"/>
             <text x="390" y="100" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="13" fontWeight="700" fill="white">Nexus Registry</text>
-            <text x="390" y="120" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#818cf8">Federated Authority</text>
+            <text x="390" y="120" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#818cf8">Trust Registry</text>
             <rect x="338" y="133" width="104" height="18" rx="9" fill="#2d2a5e"/>
-            <text x="390" y="146" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9" fill="#a5b4fc">DNS-01 · X.509 · Ledger</text>
+            <text x="390" y="146" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9" fill="#a5b4fc">DNS-01 · Email · Ledger</text>
 
             {/* Agent B */}
             <rect x="594" y="72" width="158" height="72" rx="10" fill="white" stroke="#e0e7ff" strokeWidth="1.5" filter="url(#f2s)"/>
             <text x="673" y="104" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="13" fontWeight="600" fill="#1e1b4b">Agent B</text>
-            <text x="673" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">nexus.com/accounting</text>
+            <text x="673" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">agent://nexus.io/finance/…</text>
 
             {/* ① A → Registry: resolve */}
             <line x1="188" y1="100" x2="309" y2="100" stroke="#4f46e5" strokeWidth="1.5" markerEnd="url(#m2i)"/>
@@ -201,17 +205,17 @@ export default function HomePage() {
             {
               step: "1",
               title: "Register",
-              desc: "Submit your agent's details — name, domain, capability, and the URL where it runs.",
+              desc: "Submit your agent's details — name, capability, and the URL where it runs. Choose free-hosted (email account) or domain-verified (your own domain).",
             },
             {
               step: "2",
               title: "Verify",
-              desc: "Prove you own the domain by adding a DNS TXT record. Same mechanism used by Let's Encrypt.",
+              desc: "Free-hosted: verify your email address. Domain-verified: add a DNS TXT record to prove domain ownership — the same mechanism used by Let's Encrypt.",
             },
             {
               step: "3",
               title: "Activate",
-              desc: "Once verified, your agent receives a signed X.509 identity certificate and goes live.",
+              desc: "Once verified, your agent goes live and receives a NAP Endorsement — a registry-signed certificate of trust. Domain-verified agents also receive a full X.509 identity certificate.",
             },
             {
               step: "4",
@@ -234,26 +238,32 @@ export default function HomePage() {
       <section className="rounded-xl border border-gray-200 bg-gray-50 p-8">
         <h2 className="mb-2 text-2xl font-bold text-gray-900">What does an agent address look like?</h2>
         <p className="mb-6 text-gray-500 text-sm">
-          Every registered agent gets a URI in this format:
+          Every registered agent gets a URI with three segments:
         </p>
         <code className="block text-lg font-mono text-gray-800 mb-6">
           agent://
           <span className="text-indigo-600">acme.com</span>/
-          <span className="text-emerald-600">finance/taxes</span>/
+          <span className="text-emerald-600">finance</span>/
           <span className="text-amber-600">agent_7x2v9q</span>
         </code>
         <div className="grid gap-4 sm:grid-cols-3 text-sm">
           <div className="rounded-lg border border-indigo-100 bg-white p-4">
-            <p className="font-semibold text-indigo-600 mb-1">acme.com</p>
-            <p className="text-gray-500">Your domain — proven by DNS verification. This is the trust anchor that tells others who owns this agent.</p>
+            <p className="font-semibold text-indigo-600 mb-1">acme.com <span className="text-xs font-normal text-gray-400">(or <code className="font-mono">nap</code>)</span></p>
+            <p className="text-gray-500">
+              The org — who owns this agent. For <strong>domain-verified</strong> agents this is the
+              full verified domain, proven by DNS-01 challenge. Only the owner of <code className="font-mono text-xs">acme.com</code> can
+              claim <code className="font-mono text-xs">acme.com</code> — <code className="font-mono text-xs">acme.io</code> gets a different address.
+              For <strong>free-hosted</strong> agents this is always <code className="font-mono text-xs">nap</code>
+              — a registry-controlled namespace that prevents impersonation.
+            </p>
           </div>
           <div className="rounded-lg border border-emerald-100 bg-white p-4">
-            <p className="font-semibold text-emerald-600 mb-1">finance/taxes</p>
-            <p className="text-gray-500">The capability path — a slash-separated category describing what this agent does. You define this.</p>
+            <p className="font-semibold text-emerald-600 mb-1">finance</p>
+            <p className="text-gray-500">The top-level capability category from the NAP taxonomy. Tells callers what kind of task this agent handles. Sub-categories (e.g. <code className="font-mono text-xs">finance &gt; accounting</code>) are searchable but don&apos;t appear in the URI — keeping addresses stable as capability paths evolve.</p>
           </div>
           <div className="rounded-lg border border-amber-100 bg-white p-4">
             <p className="font-semibold text-amber-600 mb-1">agent_7x2v9q</p>
-            <p className="text-gray-500">A unique ID assigned at registration. Stays the same even if the agent moves servers.</p>
+            <p className="text-gray-500">A unique ID assigned at registration. Never changes — even if the agent moves servers, gets a new domain, or changes capability sub-categories.</p>
           </div>
         </div>
       </section>
@@ -261,19 +271,23 @@ export default function HomePage() {
       {/* Feature cards */}
       <section>
         <h2 className="mb-6 text-2xl font-bold text-gray-900">What the registry provides</h2>
-        <div className="grid gap-6 md:grid-cols-3">
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {[
             {
               title: "Verified Identity",
-              desc: "Every agent URI is backed by DNS-01 domain verification. You can trust that agent://acme.com/... was actually registered by someone who controls acme.com.",
+              desc: "Domain-verified agents prove DNS ownership via the same mechanism as Let's Encrypt. Free-hosted agents are email-verified. Trust tier tells callers exactly how much verification has been performed.",
             },
             {
               title: "Stable Addressing",
               desc: "The agent:// URI never changes. Update your server URL in the registry and all callers automatically get the new endpoint — no code changes needed.",
             },
             {
+              title: "A2A-Compatible Agent Cards",
+              desc: "Activation produces a ready-to-deploy agent card you host on your own domain at /.well-known/agent.json. Any A2A client can read it natively. NAP-aware clients additionally verify the embedded endorsement JWT.",
+            },
+            {
               title: "Tamper-Proof Audit Log",
-              desc: "Every registration and activation is recorded in an append-only chain. You can independently verify the full history of any agent's identity.",
+              desc: "Every registration and activation is recorded in an append-only hash chain. You can independently verify the full history of any agent's identity.",
             },
           ].map((f) => (
             <div key={f.title} className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -292,7 +306,7 @@ export default function HomePage() {
           {`go get github.com/nexus-protocol/nexus/pkg/client
 
 c, _ := client.New("https://registry.nexusagentprotocol.com")
-result, err := c.Resolve(ctx, "agent://acme.com/finance/taxes/agent_7x2v9q")
+result, err := c.Resolve(ctx, "agent://acme.com/finance/agent_7x2v9q")
 fmt.Println(result.Endpoint) // https://api.acme.com/agents/tax-bot`}
         </pre>
       </section>

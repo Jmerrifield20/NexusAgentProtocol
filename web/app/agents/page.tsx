@@ -2,6 +2,20 @@
 
 import { useEffect, useState, useCallback } from "react";
 
+type SearchMode = "domain" | "capability";
+
+// Top-level categories — mirrors model/capabilities.go Taxonomy keys.
+const CATEGORIES = [
+  "commerce", "communication", "data", "education", "finance",
+  "healthcare", "hr", "infrastructure", "legal", "logistics",
+  "real-estate", "research",
+];
+
+// formatCapability converts "finance>accounting>reconciliation" → "finance > accounting > reconciliation"
+function formatCapability(cap: string): string {
+  return cap.replace(/>/g, " > ");
+}
+
 interface AgentCard {
   uri: string;
   display_name: string;
@@ -56,44 +70,36 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-// ── Domain lookup results (card view from /api/v1/lookup) ──────────────────
+// ── Shared agent card list (used by both domain + capability results) ────────
 
-function DomainResults({ domain, cards, loading, error }: {
-  domain: string;
+function AgentCardList({ cards, loading, loadingLabel, emptyLabel, summaryLabel }: {
   cards: AgentCard[];
   loading: boolean;
-  error: string | null;
+  loadingLabel: string;
+  emptyLabel: React.ReactNode;
+  summaryLabel: React.ReactNode;
 }) {
-  if (loading) return <p className="text-gray-500 py-4">Searching {domain}...</p>;
-  if (error)   return <p className="rounded bg-red-50 p-4 text-red-600">Error: {error}</p>;
-  if (cards.length === 0) return (
-    <p className="text-gray-500 py-4">
-      No verified agents found for <strong>{domain}</strong>.
-    </p>
-  );
+  if (loading) return <p className="text-gray-500 py-4">{loadingLabel}</p>;
+  if (cards.length === 0) return <p className="text-gray-500 py-4">{emptyLabel}</p>;
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-gray-500">
-        {cards.length} verified agent{cards.length !== 1 ? "s" : ""} registered under <strong>{domain}</strong>
-      </p>
+      <p className="text-sm text-gray-500">{summaryLabel}</p>
       <div className="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white shadow-sm">
         {cards.map((card) => (
           <div key={card.uri} className="px-5 py-4">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2 mb-1">
-                  <span className="font-semibold text-gray-900">{card.display_name}</span>
-                  <TierBadge tier={card.trust_tier} />
-                  <span className="text-xs text-gray-400 font-mono">{card.capability_node}</span>
-                </div>
-                {card.description && (
-                  <p className="text-sm text-gray-600 mb-2">{card.description}</p>
-                )}
-                <code className="text-xs font-mono text-nexus-500 break-all">{card.uri}</code>
-              </div>
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <span className="font-semibold text-gray-900">{card.display_name}</span>
+              <TierBadge tier={card.trust_tier} />
+              <span className="text-xs text-gray-400 font-mono bg-gray-50 rounded px-1.5 py-0.5">
+                {formatCapability(card.capability_node)}
+              </span>
             </div>
-            <div className="mt-2">
+            {card.description && (
+              <p className="text-sm text-gray-600 mb-2">{card.description}</p>
+            )}
+            <code className="block text-xs font-mono text-nexus-500 break-all mb-1">{card.uri}</code>
+            {card.endpoint && (
               <a
                 href={card.endpoint}
                 className="text-xs text-gray-400 hover:underline break-all"
@@ -102,7 +108,7 @@ function DomainResults({ domain, cards, loading, error }: {
               >
                 {card.endpoint}
               </a>
-            </div>
+            )}
           </div>
         ))}
       </div>
@@ -136,7 +142,8 @@ function AllAgentsList({ agents, titleFilter }: {
               <span className="font-medium text-sm text-gray-900">{agent.display_name}</span>
               <TierBadge tier={agent.trust_tier} />
               <code className="text-xs text-nexus-500 font-mono truncate">
-                agent://{agent.trust_root}/{agent.capability_node}/{agent.agent_id}
+                {/* URI uses entity-first: org/category/id */}
+                agent://{agent.trust_root}/{agent.capability_node.split(">")[0]}/{agent.agent_id}
               </code>
             </div>
             <div className="mt-0.5 flex items-center gap-3 text-xs text-gray-400">
@@ -158,12 +165,15 @@ function AllAgentsList({ agents, titleFilter }: {
 export default function AgentsPage() {
   const base = process.env.NEXT_PUBLIC_REGISTRY_URL ?? "http://localhost:8080";
 
-  // Domain lookup state
-  const [domainInput, setDomainInput] = useState("");
-  const [searchedDomain, setSearchedDomain] = useState("");
+  // Search mode
+  const [mode, setMode] = useState<SearchMode>("domain");
+
+  // Shared search state
+  const [input, setInput] = useState("");
+  const [searched, setSearched] = useState("");
   const [cards, setCards] = useState<AgentCard[]>([]);
-  const [lookupLoading, setLookupLoading] = useState(false);
-  const [lookupError, setLookupError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   // All-agents state
   const [allAgents, setAllAgents] = useState<AgentFull[]>([]);
@@ -180,18 +190,21 @@ export default function AgentsPage() {
       .finally(() => setAllLoading(false));
   }, [base]);
 
-  const handleLookup = useCallback(async (e: React.FormEvent) => {
+  const handleSearch = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    const domain = domainInput.trim();
-    if (!domain) return;
+    const value = input.trim();
+    if (!value) return;
 
-    setSearchedDomain(domain);
-    setLookupLoading(true);
-    setLookupError(null);
+    setSearched(value);
+    setLoading(true);
+    setSearchError(null);
     setCards([]);
 
     try {
-      const resp = await fetch(`${base}/api/v1/lookup?domain=${encodeURIComponent(domain)}`);
+      const param = mode === "domain"
+        ? `org=${encodeURIComponent(value)}`
+        : `capability=${encodeURIComponent(value)}`;
+      const resp = await fetch(`${base}/api/v1/lookup?${param}`);
       if (!resp.ok) {
         const body = await resp.json();
         throw new Error(body.error ?? `HTTP ${resp.status}`);
@@ -199,47 +212,70 @@ export default function AgentsPage() {
       const data = await resp.json();
       setCards(data.agents ?? []);
     } catch (e: unknown) {
-      setLookupError(e instanceof Error ? e.message : String(e));
+      setSearchError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLookupLoading(false);
+      setLoading(false);
     }
-  }, [base, domainInput]);
+  }, [base, input, mode]);
 
-  const clearLookup = () => {
-    setSearchedDomain("");
+  const clearSearch = () => {
+    setSearched("");
     setCards([]);
-    setLookupError(null);
-    setDomainInput("");
+    setSearchError(null);
+    setInput("");
+  };
+
+  const switchMode = (m: SearchMode) => {
+    setMode(m);
+    clearSearch();
   };
 
   return (
     <div className="space-y-10">
 
-      {/* Domain lookup */}
+      {/* Search panel */}
       <section>
-        <h1 className="mb-1 text-3xl font-bold">Find Agents by Domain</h1>
+        <h1 className="mb-1 text-3xl font-bold">Find Agents</h1>
         <p className="mb-5 text-gray-500 text-sm">
-          Enter a domain to see all verified agents registered under it.
+          Discover agents by their Nexus org namespace, or by the capability they provide.
         </p>
-        <form onSubmit={handleLookup} className="flex gap-2">
+
+        {/* Mode toggle */}
+        <div className="mb-4 flex gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1 w-fit">
+          {(["domain", "capability"] as SearchMode[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => switchMode(m)}
+              className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+                mode === m
+                  ? "bg-white text-gray-900 shadow-sm"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {m === "domain" ? "By Org" : "By Capability"}
+            </button>
+          ))}
+        </div>
+
+        <form onSubmit={handleSearch} className="flex gap-2">
           <input
             type="text"
-            value={domainInput}
-            onChange={(e) => setDomainInput(e.target.value)}
-            placeholder="acme.com"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={mode === "domain" ? "acme" : "finance>accounting"}
             className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-nexus-500 focus:outline-none font-mono"
           />
           <button
             type="submit"
-            disabled={lookupLoading || !domainInput.trim()}
+            disabled={loading || !input.trim()}
             className="rounded-lg bg-nexus-500 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-600 disabled:opacity-50"
           >
             Search
           </button>
-          {searchedDomain && (
+          {searched && (
             <button
               type="button"
-              onClick={clearLookup}
+              onClick={clearSearch}
               className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50"
             >
               Clear
@@ -247,20 +283,53 @@ export default function AgentsPage() {
           )}
         </form>
 
-        {searchedDomain && (
+        {/* Category quick-select chips — only shown in capability mode */}
+        {mode === "capability" && !searched && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {CATEGORIES.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setInput(cat)}
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors capitalize ${
+                  input === cat
+                    ? "bg-nexus-500 text-white border-nexus-500"
+                    : "border-gray-200 text-gray-500 hover:border-nexus-400 hover:text-nexus-600"
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {searchError && (
+          <p className="mt-3 rounded bg-red-50 p-4 text-red-600">Error: {searchError}</p>
+        )}
+
+        {searched && !searchError && (
           <div className="mt-5">
-            <DomainResults
-              domain={searchedDomain}
+            <AgentCardList
               cards={cards}
-              loading={lookupLoading}
-              error={lookupError}
+              loading={loading}
+              loadingLabel={`Searching for "${searched}"…`}
+              emptyLabel={
+                mode === "domain"
+                  ? <span>No active agents found for org <strong>{searched}</strong>.</span>
+                  : <span>No active agents found with capability <strong>{formatCapability(searched)}</strong>.</span>
+              }
+              summaryLabel={
+                mode === "domain"
+                  ? <span>{cards.length} agent{cards.length !== 1 ? "s" : ""} under org <strong>{searched}</strong></span>
+                  : <span>{cards.length} agent{cards.length !== 1 ? "s" : ""} with capability <strong>{formatCapability(searched)}</strong></span>
+              }
             />
           </div>
         )}
       </section>
 
       {/* All agents directory */}
-      {!searchedDomain && (
+      {!searched && (
         <section>
           <div className="mb-4 flex items-center justify-between gap-3">
             <h2 className="text-xl font-semibold text-gray-900">All Registered Agents</h2>

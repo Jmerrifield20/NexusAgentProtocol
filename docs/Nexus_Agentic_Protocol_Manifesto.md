@@ -1,7 +1,7 @@
-# Nexus Agentic Protocol (NAP): The 2026 Manifesto
+# Nexus Agent Protocol (NAP): The 2026 Manifesto
 
 ## 1. Vision Statement
-In the 2026 agentic economy, identity is the new perimeter. The **Nexus Agentic Protocol (NAP)** aims to transition the internet from a collection of "websites for humans" to a decentralized "mesh for agents." By decoupling identity from network topology via the `agent://` URI, we enable agents to maintain a persistent, verifiable persona regardless of their physical hosting environment.
+In the 2026 agentic economy, identity is the new perimeter. The **Nexus Agent Protocol (NAP)** aims to transition the internet from a collection of "websites for humans" to a decentralized "mesh for agents." By decoupling identity from network topology via the `agent://` URI, we enable agents to maintain a persistent, verifiable persona regardless of their physical hosting environment.
 
 ---
 
@@ -11,7 +11,7 @@ Following the IETF 2026 drafts (e.g., `draft-narvaneni-agent-uri-02`), the NAP U
 ### Standard Format:
 `agent://[trust-root]/[capability-node]/[agent-id]`
 
-* **Trust Root:** The hostname of the Central Authority (e.g., `nexus.io`).
+* **Trust Root:** The hostname of the Central Authority (e.g., `nexusagentprotocol.com`).
 * **Capability Node:** A hierarchical classification path (e.g., `/finance/taxes`).
 * **Agent ID:** A unique, sortable Base32 identifier (e.g., `agent_7x2v9q...`).
 
@@ -51,7 +51,7 @@ To spearhead adoption, we provide the **Nexus-Core SDK**, a library that handles
 ---
 
 ## 6. Project Roadmap
-* **Q1 2026:** Launch Alpha Registry at `nexus.io`.
+* **Q1 2026:** Launch Alpha Registry at `nexusagentprotocol.com`.
 * **Q2 2026:** Open-source the Nexus-Core Python/TypeScript libraries.
 * **Q3 2026:** Submit the finalized `agent://` URI scheme to IANA.
 * **Q4 2026:** Enable federated registries for private enterprise clusters.

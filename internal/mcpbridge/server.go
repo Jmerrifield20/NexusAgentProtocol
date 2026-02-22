@@ -1,5 +1,5 @@
 // Package mcpbridge implements a Model Context Protocol (MCP) server that
-// exposes Nexus Agentic Protocol (NAP) capabilities as MCP tools.
+// exposes Nexus Agent Protocol (NAP) capabilities as MCP tools.
 //
 // The server speaks JSON-RPC 2.0 over stdio, which is the standard transport
 // for Claude Desktop and other local MCP hosts.

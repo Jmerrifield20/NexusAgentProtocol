@@ -45,7 +45,7 @@ func stubRegistryServer(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{
 				"id":              "550e8400-e29b-41d4-a716-446655440000",
-				"trust_root":      "nexus.io",
+				"trust_root":      "nexusagentprotocol.com",
 				"capability_node": "finance/taxes",
 				"agent_id":        "agent_test123",
 				"status":          "pending",
@@ -53,7 +53,7 @@ func stubRegistryServer(t *testing.T) *httptest.Server {
 		case http.MethodGet:
 			json.NewEncoder(w).Encode(map[string]any{
 				"agents": []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "trust_root": "nexus.io", "status": "active"},
+					{"id": "550e8400-e29b-41d4-a716-446655440000", "trust_root": "nexusagentprotocol.com", "status": "active"},
 				},
 			})
 		}
@@ -65,7 +65,7 @@ func stubRegistryServer(t *testing.T) *httptest.Server {
 		if strings.HasSuffix(path, "/activate") {
 			json.NewEncoder(w).Encode(map[string]any{
 				"agent": map[string]any{
-					"trust_root":      "nexus.io",
+					"trust_root":      "nexusagentprotocol.com",
 					"capability_node": "finance/taxes",
 					"agent_id":        "agent_test123",
 				},
@@ -97,7 +97,7 @@ func stubRegistryServer(t *testing.T) *httptest.Server {
 		}
 		json.NewEncoder(w).Encode(map[string]any{
 			"id":              id,
-			"trust_root":      "nexus.io",
+			"trust_root":      "nexusagentprotocol.com",
 			"capability_node": "finance/taxes",
 			"agent_id":        "agent_test123",
 			"display_name":    "Test Agent",
@@ -140,7 +140,7 @@ func TestResolve_success(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := c.Resolve(context.Background(), "agent://nexus.io/finance/taxes/agent_abc")
+	result, err := c.Resolve(context.Background(), "agent://nexusagentprotocol.com/finance/taxes/agent_abc")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestResolve_notFound(t *testing.T) {
 	defer srv.Close()
 
 	c, _ := client.New(srv.URL)
-	_, err := c.Resolve(context.Background(), "agent://nexus.io/finance/taxes/not_found")
+	_, err := c.Resolve(context.Background(), "agent://nexusagentprotocol.com/finance/taxes/not_found")
 	if err == nil {
 		t.Error("expected error for not-found agent")
 	}
@@ -168,7 +168,7 @@ func TestResolve_cache(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		json.NewEncoder(w).Encode(map[string]any{
-			"uri":      "agent://nexus.io/x/agent_1",
+			"uri":      "agent://nexusagentprotocol.com/x/agent_1",
 			"endpoint": "https://cached.example.com",
 			"status":   "active",
 		})
@@ -177,8 +177,8 @@ func TestResolve_cache(t *testing.T) {
 
 	c, _ := client.New(srv.URL, client.WithCacheTTL(5*time.Minute))
 
-	c.Resolve(context.Background(), "agent://nexus.io/x/agent_1")
-	c.Resolve(context.Background(), "agent://nexus.io/x/agent_1")
+	c.Resolve(context.Background(), "agent://nexusagentprotocol.com/x/agent_1")
+	c.Resolve(context.Background(), "agent://nexusagentprotocol.com/x/agent_1")
 
 	if callCount != 1 {
 		t.Errorf("expected 1 HTTP call (cached), got %d", callCount)
@@ -191,7 +191,7 @@ func TestResolveViaService_success(t *testing.T) {
 
 	c, _ := client.New(srv.URL)
 
-	result, err := c.ResolveViaService(context.Background(), srv.URL, "agent://nexus.io/finance/taxes/agent_abc")
+	result, err := c.ResolveViaService(context.Background(), srv.URL, "agent://nexusagentprotocol.com/finance/taxes/agent_abc")
 	if err != nil {
 		t.Fatalf("ResolveViaService: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestRegisterAgent_success(t *testing.T) {
 	c, _ := client.New(srv.URL)
 
 	result, err := c.RegisterAgent(context.Background(), client.RegisterAgentRequest{
-		TrustRoot:      "nexus.io",
+		TrustRoot:      "nexusagentprotocol.com",
 		CapabilityNode: "finance/taxes",
 		DisplayName:    "Tax Agent",
 		Endpoint:       "https://tax.example.com",
@@ -246,7 +246,7 @@ func TestRegisterAgent_success(t *testing.T) {
 	if result.ID == "" {
 		t.Error("expected non-empty ID")
 	}
-	if !strings.Contains(result.URI, "agent://nexus.io/finance/taxes/") {
+	if !strings.Contains(result.URI, "agent://nexusagentprotocol.com/finance/taxes/") {
 		t.Errorf("unexpected URI: %s", result.URI)
 	}
 }
@@ -299,7 +299,7 @@ func TestListAgents_success(t *testing.T) {
 
 	c, _ := client.New(srv.URL)
 
-	agents, err := c.ListAgents(context.Background(), "nexus.io", "")
+	agents, err := c.ListAgents(context.Background(), "nexusagentprotocol.com", "")
 	if err != nil {
 		t.Fatalf("ListAgents: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestCallAgent_resolveAndCall(t *testing.T) {
 	regSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/v1/resolve") {
 			json.NewEncoder(w).Encode(map[string]any{
-				"uri":      "agent://nexus.io/x/agent_1",
+				"uri":      "agent://nexusagentprotocol.com/x/agent_1",
 				"endpoint": agentSrv.URL,
 				"status":   "active",
 			})
@@ -357,7 +357,7 @@ func TestCallAgent_resolveAndCall(t *testing.T) {
 	c, _ := client.New(regSrv.URL)
 
 	var reply map[string]string
-	err := c.CallAgent(context.Background(), "agent://nexus.io/x/agent_1", http.MethodPost, "/invoke", nil, &reply)
+	err := c.CallAgent(context.Background(), "agent://nexusagentprotocol.com/x/agent_1", http.MethodPost, "/invoke", nil, &reply)
 	if err != nil {
 		t.Fatalf("CallAgent: %v", err)
 	}

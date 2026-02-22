@@ -48,7 +48,7 @@ func NewToolRegistry(c *client.Client) *ToolRegistry {
 				"properties": map[string]any{
 					"uri": map[string]any{
 						"type":        "string",
-						"description": "The agent:// URI to resolve, e.g. agent://nexus.io/finance/billing/agent_abc",
+						"description": "The agent:// URI to resolve, e.g. agent://nexusagentprotocol.com/finance/billing/agent_abc",
 					},
 				},
 				"required": []string{"uri"},
@@ -64,7 +64,7 @@ func NewToolRegistry(c *client.Client) *ToolRegistry {
 				"properties": map[string]any{
 					"trust_root": map[string]any{
 						"type":        "string",
-						"description": "Registry hostname to filter by (e.g. nexus.io). Leave empty for all.",
+						"description": "Registry hostname to filter by (e.g. nexusagentprotocol.com). Leave empty for all.",
 					},
 					"capability_node": map[string]any{
 						"type":        "string",

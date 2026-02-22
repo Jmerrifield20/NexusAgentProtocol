@@ -72,10 +72,18 @@ func (r *AgentRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Age
 	return r.scanOne(ctx, query, id)
 }
 
-// GetByAgentID retrieves an agent by trust_root + capability_node + agent_id.
+// GetByAgentID retrieves an agent by trust_root + agent_id, with capability prefix matching.
+// capNode is the top-level category from the URI (e.g. "finance").  Agents whose
+// capability_node is that exact value OR starts with "{capNode}>" are matched, so
+// "finance>accounting>reconciliation" is correctly found when querying with "finance".
 func (r *AgentRepository) GetByAgentID(ctx context.Context, trustRoot, capNode, agentID string) (*model.Agent, error) {
-	query := `SELECT * FROM agents WHERE trust_root = $1 AND capability_node = $2 AND agent_id = $3`
-	return r.scanOne(ctx, query, trustRoot, capNode, agentID)
+	prefix := capNode + ">%"
+	query := `
+		SELECT * FROM agents
+		WHERE trust_root = $1
+		  AND (capability_node = $2 OR capability_node LIKE $3)
+		  AND agent_id = $4`
+	return r.scanOne(ctx, query, trustRoot, capNode, prefix, agentID)
 }
 
 // List returns all agents, with optional filtering by trust_root and capability_node.
@@ -83,14 +91,16 @@ func (r *AgentRepository) List(ctx context.Context, trustRoot, capNode string, l
 	if limit <= 0 {
 		limit = 50
 	}
+	// Capability filter uses prefix matching: "finance" matches "finance>accounting>reconciliation".
+	capPrefix := capNode + ">%"
 	query := `
 		SELECT * FROM agents
 		WHERE ($1 = '' OR trust_root = $1)
-		  AND ($2 = '' OR capability_node = $2)
+		  AND ($2 = '' OR capability_node = $2 OR capability_node LIKE $3)
 		ORDER BY created_at DESC
-		LIMIT $3 OFFSET $4`
+		LIMIT $4 OFFSET $5`
 
-	rows, err := r.db.Query(ctx, query, trustRoot, capNode, limit, offset)
+	rows, err := r.db.Query(ctx, query, trustRoot, capNode, capPrefix, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -136,9 +146,10 @@ func (r *AgentRepository) ListByOwnerDomain(ctx context.Context, ownerDomain str
 	return agents, rows.Err()
 }
 
-// SearchByDomain returns active, domain-verified agents whose trust_root matches
-// the given domain. This is the canonical lookup for "what agents does acme.com have?"
-func (r *AgentRepository) SearchByDomain(ctx context.Context, domain string, limit, offset int) ([]*model.Agent, error) {
+// SearchByOrg returns all active agents registered under the given org namespace.
+// In the new URI model, trust_root stores the org name (e.g. "acme"), so this
+// is the canonical lookup for "what agents does the org acme have?"
+func (r *AgentRepository) SearchByOrg(ctx context.Context, orgName string, limit, offset int) ([]*model.Agent, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -146,11 +157,52 @@ func (r *AgentRepository) SearchByDomain(ctx context.Context, domain string, lim
 		SELECT * FROM agents
 		WHERE trust_root = $1
 		  AND status = 'active'
-		  AND registration_type = 'domain'
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3`
 
-	rows, err := r.db.Query(ctx, query, domain, limit, offset)
+	rows, err := r.db.Query(ctx, query, orgName, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var agents []*model.Agent
+	for rows.Next() {
+		a, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
+// SearchByCapability returns active agents whose capability_node exactly matches
+// or is a hierarchical child of the given capability prefix (using ">" as separator).
+// e.g. "finance" also matches "finance>accounting", "finance>accounting>reconciliation".
+// Results are ordered by effective trust tier (trusted → verified → basic → unverified)
+// then newest first. An optional orgName restricts results to a single trust root.
+func (r *AgentRepository) SearchByCapability(ctx context.Context, capability, orgName string, limit, offset int) ([]*model.Agent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	prefix := capability + ">%"
+	query := `
+		SELECT * FROM agents
+		WHERE (capability_node = $1 OR capability_node LIKE $2)
+		  AND status = 'active'
+		  AND ($3 = '' OR trust_root = $3)
+		ORDER BY
+		  CASE
+		    WHEN cert_serial != '' AND registration_type = 'domain' THEN 1
+		    WHEN cert_serial != ''                                   THEN 2
+		    WHEN registration_type = 'domain'                        THEN 3
+		    ELSE 4
+		  END,
+		  created_at DESC
+		LIMIT $4 OFFSET $5`
+
+	rows, err := r.db.Query(ctx, query, capability, prefix, orgName, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -215,17 +267,26 @@ func (r *AgentRepository) Update(ctx context.Context, agent *model.Agent) error 
 	agent.UpdatedAt = time.Now().UTC()
 	query := `
 		UPDATE agents SET
-			display_name = $2,
-			description = $3,
-			endpoint = $4,
+			display_name  = $2,
+			description   = $3,
+			endpoint      = $4,
 			public_key_pem = $5,
-			metadata = $6,
-			updated_at = $7
+			metadata      = $6,
+			updated_at    = $7,
+			version       = $8,
+			tags          = $9,
+			support_url   = $10,
+			pricing_info  = $11
 		WHERE id = $1`
 
+	tags := agent.Tags
+	if tags == nil {
+		tags = []string{}
+	}
 	tag, err := r.db.Exec(ctx, query,
 		agent.ID, agent.DisplayName, agent.Description,
 		agent.Endpoint, agent.PublicKeyPEM, meta, agent.UpdatedAt,
+		agent.Version, tags, agent.SupportURL, agent.PricingInfo,
 	)
 	if err != nil {
 		return err
@@ -312,6 +373,8 @@ func (r *AgentRepository) scan(rows pgx.Rows) (*model.Agent, error) {
 		&a.Status, &a.CertSerial, &a.PublicKeyPEM, &metaRaw,
 		&a.CreatedAt, &a.UpdatedAt, &a.ExpiresAt,
 		&a.OwnerUserID, &a.RegistrationType,
+		&a.Version, &a.Tags, &a.SupportURL, &a.PricingInfo,
+		&a.LastSeenAt, &a.HealthStatus,
 	)
 	if err != nil {
 		return nil, err

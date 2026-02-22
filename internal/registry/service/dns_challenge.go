@@ -20,6 +20,7 @@ type challengeStore interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*model.DNSChallenge, error)
 	MarkVerified(ctx context.Context, id uuid.UUID) error
 	FindVerifiedByDomain(ctx context.Context, domain string) (*model.DNSChallenge, error)
+	DeleteExpired(ctx context.Context) (int64, error)
 }
 
 // verifyFn is a function that performs the actual DNS TXT lookup for a challenge.
@@ -154,6 +155,19 @@ func (s *DNSChallengeService) IsDomainVerified(ctx context.Context, domain strin
 		return false, fmt.Errorf("check domain verification: %w", err)
 	}
 	return true, nil
+}
+
+// DeleteExpired removes all unverified challenges that have passed their expiry.
+// Returns the number of rows removed. Safe to call from a background goroutine.
+func (s *DNSChallengeService) DeleteExpired(ctx context.Context) (int64, error) {
+	n, err := s.store.DeleteExpired(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("delete expired challenges: %w", err)
+	}
+	if n > 0 {
+		s.logger.Info("pruned expired DNS challenges", zap.Int64("count", n))
+	}
+	return n, nil
 }
 
 // Sentinel errors for the DNS challenge service.

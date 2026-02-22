@@ -35,12 +35,12 @@ func TestNew_genesisEntry(t *testing.T) {
 func TestAppend_chainsCorrectly(t *testing.T) {
 	l := trustledger.New()
 
-	e1, err := l.Append(ctx, "agent://nexus.io/a/agent_1", "register", "example.com", map[string]string{"key": "val"})
+	e1, err := l.Append(ctx, "agent://nexusagentprotocol.com/a/agent_1", "register", "example.com", map[string]string{"key": "val"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	e2, err := l.Append(ctx, "agent://nexus.io/a/agent_1", "activate", "nexus-system", nil)
+	e2, err := l.Append(ctx, "agent://nexusagentprotocol.com/a/agent_1", "activate", "nexus-system", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,8 +60,8 @@ func TestAppend_chainsCorrectly(t *testing.T) {
 
 func TestVerify_valid(t *testing.T) {
 	l := trustledger.New()
-	_, _ = l.Append(ctx, "agent://nexus.io/a/agent_1", "register", "example.com", nil)
-	_, _ = l.Append(ctx, "agent://nexus.io/a/agent_1", "activate", "nexus-system", nil)
+	_, _ = l.Append(ctx, "agent://nexusagentprotocol.com/a/agent_1", "register", "example.com", nil)
+	_, _ = l.Append(ctx, "agent://nexusagentprotocol.com/a/agent_1", "activate", "nexus-system", nil)
 
 	if err := l.Verify(ctx); err != nil {
 		t.Errorf("Verify() failed on valid chain: %v", err)
@@ -70,7 +70,7 @@ func TestVerify_valid(t *testing.T) {
 
 func TestRoot_returnsLastHash(t *testing.T) {
 	l := trustledger.New()
-	e, _ := l.Append(ctx, "agent://nexus.io/a/agent_1", "register", "example.com", nil)
+	e, _ := l.Append(ctx, "agent://nexusagentprotocol.com/a/agent_1", "register", "example.com", nil)
 
 	root, err := l.Root(ctx)
 	if err != nil {

@@ -6,6 +6,7 @@ registry:
   read_timeout_seconds: 30
   write_timeout_seconds: 30
   idle_timeout_seconds: 120
+  frontend_url: "http://localhost:3000"   # base URL of the web frontend (used in email links)
 
 database:
   url: "postgres://nexus:nexus@localhost:5432/nexus?sslmode=disable"
@@ -27,3 +28,24 @@ dns:
 
 trust_ledger:
   enabled: true
+
+free_tier:
+  trust_root: "nexusagentprotocol.com"
+  max_agents: 0  # 0 = unlimited; set > 0 to enforce a per-user agent quota
+
+email:
+  smtp_host: ""
+  smtp_port: 587
+  smtp_username: ""
+  smtp_password: ""
+  from_address: "noreply@nexusagentprotocol.com"
+
+oauth:
+  github:
+    client_id: ""
+    client_secret: ""
+    redirect_url: "http://localhost:8080/api/v1/auth/oauth/github/callback"
+  google:
+    client_id: ""
+    client_secret: ""
+    redirect_url: "http://localhost:8080/api/v1/auth/oauth/google/callback"

@@ -309,7 +309,7 @@ func (c *Client) ensureToken(ctx context.Context) (string, error) {
 //
 //	var reply InvoiceResponse
 //	err := c.CallAgent(ctx,
-//	    "agent://nexus.io/finance/billing/agent_7x2v9q",
+//	    "agent://nexusagentprotocol.com/finance/billing/agent_7x2v9q",
 //	    http.MethodPost, "/v1/invoice",
 //	    &InvoiceRequest{Amount: 100},
 //	    &reply,
@@ -397,7 +397,7 @@ func (c *Client) ResolveViaService(ctx context.Context, resolverBase, agentURI s
 	}
 
 	url := fmt.Sprintf("%s/v1/resolve?trust_root=%s&capability_node=%s&agent_id=%s",
-		resolverBase, parsed.TrustRoot, parsed.CapabilityNode, parsed.AgentID,
+		resolverBase, parsed.OrgName, parsed.Category, parsed.AgentID,
 	)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -424,7 +424,7 @@ func (c *Client) ResolveViaService(ctx context.Context, resolverBase, agentURI s
 // resolve performs the actual HTTP resolve call to the registry.
 func (c *Client) resolve(ctx context.Context, u *uri.URI) (*ResolveResult, error) {
 	url := fmt.Sprintf("%s/api/v1/resolve?trust_root=%s&capability_node=%s&agent_id=%s",
-		c.registryBase, u.TrustRoot, u.CapabilityNode, u.AgentID,
+		c.registryBase, u.OrgName, u.Category, u.AgentID,
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

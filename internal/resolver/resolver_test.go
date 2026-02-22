@@ -64,7 +64,7 @@ func newTestService(t *testing.T, srv *httptest.Server, cacheTTL time.Duration) 
 
 func TestResolve_found(t *testing.T) {
 	reg := stubRegistry(t, map[string]map[string]string{
-		"nexus.io/finance/taxes/agent_abc": {
+		"nexusagentprotocol.com/finance/taxes/agent_abc": {
 			"endpoint":    "https://agent.example.com/finance",
 			"status":      "active",
 			"cert_serial": "deadbeef",
@@ -75,7 +75,7 @@ func TestResolve_found(t *testing.T) {
 	svc := newTestService(t, reg, 0) // no caching
 
 	resp, err := svc.Resolve(context.Background(), &resolverv1.ResolveRequest{
-		TrustRoot:      "nexus.io",
+		TrustRoot:      "nexusagentprotocol.com",
 		CapabilityNode: "finance/taxes",
 		AgentId:        "agent_abc",
 	})
@@ -89,7 +89,7 @@ func TestResolve_found(t *testing.T) {
 	if resp.Status != "active" {
 		t.Errorf("Status: got %q", resp.Status)
 	}
-	if resp.Uri != "agent://nexus.io/finance/taxes/agent_abc" {
+	if resp.Uri != "agent://nexusagentprotocol.com/finance/taxes/agent_abc" {
 		t.Errorf("URI: got %q", resp.Uri)
 	}
 	if resp.CertSerial != "deadbeef" {
@@ -104,7 +104,7 @@ func TestResolve_notFound(t *testing.T) {
 	svc := newTestService(t, reg, 0)
 
 	_, err := svc.Resolve(context.Background(), &resolverv1.ResolveRequest{
-		TrustRoot:      "nexus.io",
+		TrustRoot:      "nexusagentprotocol.com",
 		CapabilityNode: "finance/taxes",
 		AgentId:        "agent_missing",
 	})
@@ -126,8 +126,8 @@ func TestResolve_missingFields(t *testing.T) {
 		req  *resolverv1.ResolveRequest
 	}{
 		{"empty trust_root", &resolverv1.ResolveRequest{CapabilityNode: "a", AgentId: "agent_x"}},
-		{"empty capability_node", &resolverv1.ResolveRequest{TrustRoot: "nexus.io", AgentId: "agent_x"}},
-		{"empty agent_id", &resolverv1.ResolveRequest{TrustRoot: "nexus.io", CapabilityNode: "a"}},
+		{"empty capability_node", &resolverv1.ResolveRequest{TrustRoot: "nexusagentprotocol.com", AgentId: "agent_x"}},
+		{"empty agent_id", &resolverv1.ResolveRequest{TrustRoot: "nexusagentprotocol.com", CapabilityNode: "a"}},
 	}
 
 	for _, tc := range cases {
@@ -153,7 +153,7 @@ func TestResolve_cacheHit(t *testing.T) {
 		callCount++
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck
-			"uri":      "agent://nexus.io/a/agent_x",
+			"uri":      "agent://nexusagentprotocol.com/a/agent_x",
 			"endpoint": "https://cached.example.com",
 			"status":   "active",
 		})
@@ -161,7 +161,7 @@ func TestResolve_cacheHit(t *testing.T) {
 	defer reg.Close()
 
 	svc := newTestService(t, reg, time.Minute) // cache enabled
-	req := &resolverv1.ResolveRequest{TrustRoot: "nexus.io", CapabilityNode: "a", AgentId: "agent_x"}
+	req := &resolverv1.ResolveRequest{TrustRoot: "nexusagentprotocol.com", CapabilityNode: "a", AgentId: "agent_x"}
 
 	// First call: cache miss → registry query
 	if _, err := svc.Resolve(context.Background(), req); err != nil {
@@ -183,18 +183,18 @@ func TestResolve_cacheInvalidate(t *testing.T) {
 		callCount++
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck
-			"uri": "agent://nexus.io/a/agent_x", "endpoint": "https://e.example.com", "status": "active",
+			"uri": "agent://nexusagentprotocol.com/a/agent_x", "endpoint": "https://e.example.com", "status": "active",
 		})
 	}))
 	defer reg.Close()
 
 	svc := newTestService(t, reg, time.Minute)
-	req := &resolverv1.ResolveRequest{TrustRoot: "nexus.io", CapabilityNode: "a", AgentId: "agent_x"}
+	req := &resolverv1.ResolveRequest{TrustRoot: "nexusagentprotocol.com", CapabilityNode: "a", AgentId: "agent_x"}
 
 	if _, err := svc.Resolve(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
-	svc.Invalidate("nexus.io", "a", "agent_x")
+	svc.Invalidate("nexusagentprotocol.com", "a", "agent_x")
 
 	if _, err := svc.Resolve(context.Background(), req); err != nil {
 		t.Fatal(err)
@@ -208,8 +208,8 @@ func TestResolve_cacheInvalidate(t *testing.T) {
 
 func TestResolveMany(t *testing.T) {
 	reg := stubRegistry(t, map[string]map[string]string{
-		"nexus.io/a/agent_1": {"endpoint": "https://a1.example.com", "status": "active"},
-		"nexus.io/b/agent_2": {"endpoint": "https://b2.example.com", "status": "active"},
+		"nexusagentprotocol.com/a/agent_1": {"endpoint": "https://a1.example.com", "status": "active"},
+		"nexusagentprotocol.com/b/agent_2": {"endpoint": "https://b2.example.com", "status": "active"},
 	})
 	defer reg.Close()
 
@@ -217,9 +217,9 @@ func TestResolveMany(t *testing.T) {
 
 	resp, err := svc.ResolveMany(context.Background(), &resolverv1.ResolveManyRequest{
 		Requests: []*resolverv1.ResolveRequest{
-			{TrustRoot: "nexus.io", CapabilityNode: "a", AgentId: "agent_1"},
-			{TrustRoot: "nexus.io", CapabilityNode: "b", AgentId: "agent_2"},
-			{TrustRoot: "nexus.io", CapabilityNode: "x", AgentId: "agent_missing"}, // will error
+			{TrustRoot: "nexusagentprotocol.com", CapabilityNode: "a", AgentId: "agent_1"},
+			{TrustRoot: "nexusagentprotocol.com", CapabilityNode: "b", AgentId: "agent_2"},
+			{TrustRoot: "nexusagentprotocol.com", CapabilityNode: "x", AgentId: "agent_missing"}, // will error
 		},
 	})
 	if err != nil {
@@ -271,7 +271,7 @@ func TestResolveMany_batchTooLarge(t *testing.T) {
 
 func TestGRPCEndToEnd(t *testing.T) {
 	reg := stubRegistry(t, map[string]map[string]string{
-		"nexus.io/finance/agent_e2e": {
+		"nexusagentprotocol.com/finance/agent_e2e": {
 			"endpoint": "https://e2e.example.com",
 			"status":   "active",
 		},
@@ -305,7 +305,7 @@ func TestGRPCEndToEnd(t *testing.T) {
 	client := resolverv1.NewResolverServiceClient(conn)
 
 	resp, err := client.Resolve(context.Background(), &resolverv1.ResolveRequest{
-		TrustRoot:      "nexus.io",
+		TrustRoot:      "nexusagentprotocol.com",
 		CapabilityNode: "finance",
 		AgentId:        "agent_e2e",
 	})

@@ -21,7 +21,7 @@ import (
 
 // Config holds resolver service configuration.
 type Config struct {
-	RegistryAddr string        // e.g. "localhost:8080" or "https://registry.nexus.io"
+	RegistryAddr string        // e.g. "localhost:8080" or "https://registry.nexusagentprotocol.com"
 	CacheTTL     time.Duration // 0 disables caching
 	HTTPTimeout  time.Duration // default 5s
 }

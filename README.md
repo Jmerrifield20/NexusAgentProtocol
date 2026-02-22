@@ -1,10 +1,10 @@
-# Nexus Agentic Protocol (NAP)
+# Nexus Agent Protocol (NAP)
 
 An open-source, self-hosted authority for registering and resolving agents on the internet via the `agent://` URI scheme.
 
 ## Overview
 
-The Nexus Agentic Protocol (NAP) provides a decentralized identity mesh for autonomous agents. By decoupling agent identity from network topology via the `agent://` URI, agents maintain a persistent, verifiable persona regardless of their physical hosting environment.
+The Nexus Agent Protocol (NAP) provides a decentralized identity mesh for autonomous agents. By decoupling agent identity from network topology via the `agent://` URI, agents maintain a persistent, verifiable persona regardless of their physical hosting environment.
 
 ### Core Services
 
@@ -21,7 +21,7 @@ The Nexus Agentic Protocol (NAP) provides a decentralized identity mesh for auto
 agent://[trust-root]/[capability-node]/[agent-id]
 ```
 
-- **trust-root** — Registry hostname (e.g., `nexus.io`)
+- **trust-root** — Registry hostname (e.g., `nexusagentprotocol.com`)
 - **capability-node** — Hierarchical classification path (e.g., `finance/taxes`)
 - **agent-id** — Unique sortable Base32 identifier
 
@@ -52,7 +52,7 @@ curl http://localhost:8080/healthz
 
 ```bash
 nap register \
-  --trust-root nexus.io \
+  --trust-root nexusagentprotocol.com \
   --capability finance/taxes \
   --endpoint https://my-agent.example.com
 ```
@@ -60,7 +60,7 @@ nap register \
 ### 4. Resolve an agent
 
 ```bash
-nap resolve "agent://nexus.io/finance/taxes/agent_7x2v9q"
+nap resolve "agent://nexusagentprotocol.com/finance/taxes/agent_7x2v9q"
 ```
 
 ## Development
@@ -158,7 +158,7 @@ Please read our [Contributing Guide](CONTRIBUTING.md) and follow the [Code of Co
 
 ## Security
 
-To report a security vulnerability, please email security@nexus.io rather than opening a public issue.
+To report a security vulnerability, please email security@nexusagentprotocol.com rather than opening a public issue.
 
 ## License
 

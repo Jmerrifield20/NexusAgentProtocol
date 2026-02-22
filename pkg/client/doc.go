@@ -1,4 +1,4 @@
-// Package client is the Nexus Agentic Protocol (NAP) Go SDK.
+// Package client is the Nexus Agent Protocol (NAP) Go SDK.
 //
 // It provides everything a developer needs to build NAP-compliant agents:
 // discovering other agents, authenticating with the Nexus registry, obtaining
@@ -10,7 +10,7 @@
 // Load them in one call:
 //
 //	c, err := client.NewFromCertDir(
-//	    "https://registry.nexus.io",
+//	    "https://registry.nexusagentprotocol.com",
 //	    os.ExpandEnv("$HOME/.nap/certs/example.com"),
 //	)
 //	if err != nil {
@@ -24,7 +24,7 @@
 //
 //	var reply InvoiceResponse
 //	err = c.CallAgent(ctx,
-//	    "agent://nexus.io/finance/billing/agent_7x2v9q",
+//	    "agent://nexusagentprotocol.com/finance/billing/agent_7x2v9q",
 //	    http.MethodPost, "/v1/invoice",
 //	    &InvoiceRequest{Amount: 100, Currency: "USD"},
 //	    &reply,
@@ -37,7 +37,7 @@
 //
 // When you only need the transport endpoint without making a call:
 //
-//	result, err := c.Resolve(ctx, "agent://nexus.io/finance/billing/agent_7x2v9q")
+//	result, err := c.Resolve(ctx, "agent://nexusagentprotocol.com/finance/billing/agent_7x2v9q")
 //	fmt.Println(result.Endpoint) // https://billing.example.com
 //
 // Add result caching with WithCacheTTL to avoid repeated registry lookups:
@@ -50,7 +50,7 @@
 //
 // Resolution is public — no certificate is required:
 //
-//	c, _ := client.New("https://registry.nexus.io")
+//	c, _ := client.New("https://registry.nexusagentprotocol.com")
 //	result, err := c.Resolve(ctx, agentURI)
 //
 // # Token management
@@ -69,7 +69,7 @@
 //	// ... publish challenge.TXTHost / challenge.TXTRecord ...
 //	c.VerifyDNSChallenge(ctx, challenge.ID)
 //	agent, _ := c.RegisterAgent(ctx, client.RegisterAgentRequest{
-//	    TrustRoot:      "nexus.io",
+//	    TrustRoot:      "nexusagentprotocol.com",
 //	    CapabilityNode: "finance/billing",
 //	    DisplayName:    "Acme Billing",
 //	    Endpoint:       "https://billing.example.com",
