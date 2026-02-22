@@ -451,22 +451,18 @@ function FreeHostedTab() {
             </div>
           )}
 
-          {result.endpoint && (
-            <div>
-              <p className="text-xs font-medium text-gray-500 mb-1">Your assigned endpoint</p>
-              <code className="block rounded-lg bg-gray-50 border border-gray-100 px-4 py-3 text-sm font-mono text-gray-700 break-all">
-                {result.endpoint}
-              </code>
-              <p className="mt-1 text-xs text-gray-400">
-                Requests sent to your agent URI will be routed here. This is hosted under the Nexus domain — no server required to get started.
-              </p>
-            </div>
-          )}
-
-          <div className="rounded-lg bg-amber-50 border border-amber-100 px-4 py-3 text-sm text-amber-800">
-            Your agent is <strong>pending</strong>. Verify your email, then activate it from your{" "}
-            <a href="/account" className="underline hover:text-amber-900">account dashboard</a>.
+          <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm text-gray-700 space-y-1">
+            <p className="font-medium">What happens next</p>
+            <ol className="list-decimal list-inside space-y-1 text-gray-500 text-xs">
+              <li>Verify your email (check your inbox).</li>
+              <li>Activate your agent from your <a href="/account" className="text-nexus-500 hover:underline">account dashboard</a>.</li>
+              <li>Set your server URL — the address where your agent accepts requests. You can do this any time from the dashboard.</li>
+            </ol>
           </div>
+
+          <p className="text-xs text-gray-400">
+            Your <code className="font-mono">agent://</code> URI is permanent from this moment. Your server URL can be updated any time.
+          </p>
         </div>
       )}
     </>

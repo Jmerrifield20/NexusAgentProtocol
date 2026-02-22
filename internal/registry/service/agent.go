@@ -179,21 +179,13 @@ func (s *AgentService) Register(ctx context.Context, req *model.RegisterRequest)
 		}
 		capNode := "hosted/" + req.Username
 
-		// We own the nexusagentprotocol.com namespace, so we assign the
-		// endpoint — the user doesn't provide one.
-		base := s.registryURL
-		if base == "" {
-			base = "https://nexusagentprotocol.com"
-		}
-		endpoint := base + "/hosted/" + req.Username + "/" + agentID
-
 		agent = &model.Agent{
 			TrustRoot:        trustRoot,
 			CapabilityNode:   capNode,
 			AgentID:          agentID,
 			DisplayName:      req.DisplayName,
 			Description:      req.Description,
-			Endpoint:         endpoint,
+			Endpoint:         req.Endpoint, // empty until user configures their server
 			Status:           model.AgentStatusPending,
 			PublicKeyPEM:     req.PublicKeyPEM,
 			Metadata:         req.Metadata,
