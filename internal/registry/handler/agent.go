@@ -489,6 +489,7 @@ func (h *AgentHandler) ResolveAgent(c *gin.Context) {
 // It contains only what a consumer needs to discover and connect to an agent —
 // no internal fields like cert_serial or public_key_pem.
 type agentCardView struct {
+	ID             string           `json:"id"`
 	URI            string           `json:"uri"`
 	DisplayName    string           `json:"display_name"`
 	Description    string           `json:"description"`
@@ -500,6 +501,7 @@ type agentCardView struct {
 
 func toCardView(a *model.Agent) agentCardView {
 	return agentCardView{
+		ID:             a.ID.String(),
 		URI:            a.URI(),
 		DisplayName:    a.DisplayName,
 		Description:    a.Description,

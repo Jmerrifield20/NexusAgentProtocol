@@ -17,6 +17,7 @@ function formatCapability(cap: string): string {
 }
 
 interface AgentCard {
+  id: string;
   uri: string;
   display_name: string;
   description: string;
@@ -87,7 +88,7 @@ function AgentCardList({ cards, loading, loadingLabel, emptyLabel, summaryLabel 
       <p className="text-sm text-gray-500">{summaryLabel}</p>
       <div className="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white shadow-sm">
         {cards.map((card) => (
-          <div key={card.uri} className="px-5 py-4">
+          <a key={card.uri} href={`/agents/${card.id}`} className="block px-5 py-4 hover:bg-gray-50 transition-colors">
             <div className="flex flex-wrap items-center gap-2 mb-1">
               <span className="font-semibold text-gray-900">{card.display_name}</span>
               <TierBadge tier={card.trust_tier} />
@@ -100,16 +101,9 @@ function AgentCardList({ cards, loading, loadingLabel, emptyLabel, summaryLabel 
             )}
             <code className="block text-xs font-mono text-nexus-500 break-all mb-1">{card.uri}</code>
             {card.endpoint && (
-              <a
-                href={card.endpoint}
-                className="text-xs text-gray-400 hover:underline break-all"
-                target="_blank"
-                rel="noreferrer"
-              >
-                {card.endpoint}
-              </a>
+              <span className="text-xs text-gray-400 break-all">{card.endpoint}</span>
             )}
-          </div>
+          </a>
         ))}
       </div>
     </div>
@@ -136,25 +130,22 @@ function AllAgentsList({ agents, titleFilter }: {
   return (
     <div className="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white shadow-sm">
       {filtered.map((agent) => (
-        <div key={agent.id} className="flex items-center justify-between px-4 py-3 gap-4">
+        <a key={agent.id} href={`/agents/${agent.id}`} className="flex items-center justify-between px-4 py-3 gap-4 hover:bg-gray-50 transition-colors">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium text-sm text-gray-900">{agent.display_name}</span>
               <TierBadge tier={agent.trust_tier} />
               <code className="text-xs text-nexus-500 font-mono truncate">
-                {/* URI uses entity-first: org/category/id */}
                 agent://{agent.trust_root}/{agent.capability_node.split(">")[0]}/{agent.agent_id}
               </code>
             </div>
             <div className="mt-0.5 flex items-center gap-3 text-xs text-gray-400">
-              <a href={agent.endpoint} className="hover:underline truncate" target="_blank" rel="noreferrer">
-                {agent.endpoint}
-              </a>
+              <span className="truncate">{agent.endpoint}</span>
               <span>{new Date(agent.created_at).toLocaleDateString()}</span>
             </div>
           </div>
           <StatusBadge status={agent.status} />
-        </div>
+        </a>
       ))}
     </div>
   );
