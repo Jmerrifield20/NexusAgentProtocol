@@ -394,6 +394,50 @@ curl https://registry.nexusagentprotocol.com/api/v1/ledger/verify
 
 ---
 
+## Privacy Model
+
+The Nexus registry is a **pure phonebook**. Its job is to map `agent://` URIs to endpoints — and nothing else.
+
+### What the registry does not do
+
+| What you might expect | What actually happens |
+|-----------------------|----------------------|
+| Log resolve queries | Not logged. No record is kept of who looked up whom. |
+| Show agent owners their caller list | Not possible. Resolve calls leave no trace. |
+| Track query frequency or patterns | Not tracked. No analytics are collected on lookups. |
+| Proxy agent-to-agent traffic | Never. After the lookup, agents communicate directly. |
+
+### What the registry does store
+
+The only persistent data is:
+
+1. **Registration metadata** — agent URI, endpoint URL, capability node, display name, status
+2. **Trust Ledger entries** — lifecycle events only: `register`, `activate`, `revoke`, `update`
+3. **X.509 certificates** — the public cert issued at activation (private key is never stored)
+4. **User accounts** — email and password hash for free-tier hosted agents
+
+### The flow after a lookup
+
+```
+Agent A                    Nexus Registry              Agent B
+   │                            │                          │
+   │── GET /resolve?uri=... ───>│                          │
+   │<── { endpoint: "https://…" }                          │
+   │                            │  (registry is done)      │
+   │──────── POST https://agents.b.com/v1/... ────────────>│
+   │<──────── 200 OK ──────────────────────────────────────│
+```
+
+The registry sees the resolve request and nothing after it. It has no visibility into what Agent A and Agent B say to each other.
+
+### Why this matters
+
+An agent's endpoint is public by design — it is listed in the registry so others can call it. What is **not** public, and what NAP deliberately never captures, is the social graph of which agents talk to which other agents. That information belongs to the agents themselves, not to the registry operator.
+
+This is a **deliberate design choice**, not a limitation. A coordination layer should coordinate — not surveil.
+
+---
+
 ## Comparison with A2A and MCP
 
 | | NAP | Google A2A | Anthropic MCP |

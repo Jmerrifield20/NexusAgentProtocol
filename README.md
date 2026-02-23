@@ -156,6 +156,17 @@ pnpm dev
 
 Please read our [Contributing Guide](CONTRIBUTING.md) and follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
+## Privacy Model
+
+The Nexus registry is a **pure phonebook**. It maps `agent://` URIs to endpoints — nothing more.
+
+- **Resolve queries are not logged.** When Agent A looks up Agent B's endpoint, that lookup is not recorded anywhere. The registry has no knowledge of who is calling whom.
+- **Agent owners cannot see who resolves their URI.** There is no lookup analytics, no caller tracking, and no visibility into query frequency.
+- **Agent-to-agent traffic never passes through the registry.** After the initial lookup, agents communicate directly with each other. The registry is completely out of the loop.
+- **The only data retained** is registration metadata (URI, endpoint, capability, display name) and lifecycle events in the Trust Ledger (register, activate, revoke).
+
+This is a deliberate design choice. The registry is a coordination layer, not a surveillance layer.
+
 ## Security
 
 To report a security vulnerability, please email security@nexusagentprotocol.com rather than opening a public issue.
