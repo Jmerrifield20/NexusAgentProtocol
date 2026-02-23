@@ -29,19 +29,101 @@ func (ic *IssuedCert) TLSCertificate() (tls.Certificate, error) {
 }
 
 // Issuer issues and verifies X.509 certificates signed by the Nexus CA.
+// In root mode (ca != nil) it uses the CAManager directly.
+// In federated mode (intermediateCert/Key != nil) it signs via the intermediate CA
+// provided by the NAP root registry.
 type Issuer struct {
-	ca *CAManager
+	ca               *CAManager        // non-nil: root mode
+	intermediateCert *x509.Certificate // non-nil: federated mode
+	intermediateKey  *rsa.PrivateKey   // non-nil: federated mode
+	rootCAPool       *x509.CertPool    // non-nil: federated mode, anchors verification
 }
 
-// NewIssuer creates an Issuer backed by the given CAManager.
+// NewIssuer creates an Issuer backed by the given CAManager (root/standalone mode).
 func NewIssuer(ca *CAManager) *Issuer {
 	return &Issuer{ca: ca}
 }
 
+// NewIssuerWithIntermediate creates an Issuer that signs leaf certificates with
+// an intermediate CA issued by the NAP root registry (federated mode).
+// rootCAPool is used to verify peer certificates up to the root trust anchor.
+func NewIssuerWithIntermediate(
+	intermediateCert *x509.Certificate,
+	intermediateKey *rsa.PrivateKey,
+	rootCAPool *x509.CertPool,
+) *Issuer {
+	return &Issuer{
+		intermediateCert: intermediateCert,
+		intermediateKey:  intermediateKey,
+		rootCAPool:       rootCAPool,
+	}
+}
+
 // CACertPEM returns the CA certificate in PEM format.
-// Clients use this to configure their TLS trust store.
+// In federated mode this returns the intermediate cert PEM so that clients
+// can configure their TLS trust against this registry's issuing CA.
 func (i *Issuer) CACertPEM() string {
+	if i.intermediateCert != nil {
+		return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: i.intermediateCert.Raw}))
+	}
 	return string(i.ca.CertPEM())
+}
+
+// IssueIntermediateCert signs a subordinate CA certificate from the root CA.
+// MaxPathLen=0 prevents intermediates from issuing further intermediates.
+// Default validity is 5 years. Only callable when the Issuer is in root mode.
+func (i *Issuer) IssueIntermediateCert(org string, validFor time.Duration) (*IssuedCert, error) {
+	if i.ca == nil || i.ca.cert == nil || i.ca.key == nil {
+		return nil, fmt.Errorf("IssueIntermediateCert: issuer is not in root mode (no CAManager)")
+	}
+	if validFor == 0 {
+		validFor = 5 * 365 * 24 * time.Hour
+	}
+
+	subKey, err := rsa.GenerateKey(rand.Reader, caKeyBits)
+	if err != nil {
+		return nil, fmt.Errorf("generate intermediate key: %w", err)
+	}
+
+	serial, err := randomSerial()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   fmt.Sprintf("NAP Intermediate CA — %s", org),
+			Organization: []string{"Nexus Agent Protocol"},
+		},
+		NotBefore:             now.Add(-time.Minute),
+		NotAfter:              now.Add(validFor),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLen:            0,
+		MaxPathLenZero:        true,
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, i.ca.cert, &subKey.PublicKey, i.ca.key)
+	if err != nil {
+		return nil, fmt.Errorf("create intermediate certificate: %w", err)
+	}
+	cert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		return nil, fmt.Errorf("parse intermediate certificate: %w", err)
+	}
+
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(subKey)}))
+
+	return &IssuedCert{
+		CertPEM: certPEM,
+		KeyPEM:  keyPEM,
+		Serial:  serial.Text(16),
+		Cert:    cert,
+	}, nil
 }
 
 // IssueAgentCert issues an X.509 certificate for an agent identity.
@@ -52,8 +134,8 @@ func (i *Issuer) CACertPEM() string {
 //   - DNS SAN: ownerDomain
 //   - EKU: ClientAuth + ServerAuth
 func (i *Issuer) IssueAgentCert(agentURI, ownerDomain string, validFor time.Duration) (*IssuedCert, error) {
-	if i.ca.cert == nil || i.ca.key == nil {
-		return nil, fmt.Errorf("CA not loaded; call LoadOrCreate first")
+	if err := i.checkSigning(); err != nil {
+		return nil, err
 	}
 	if validFor == 0 {
 		validFor = 365 * 24 * time.Hour
@@ -94,8 +176,8 @@ func (i *Issuer) IssueAgentCert(agentURI, ownerDomain string, validFor time.Dura
 
 // IssueServerCert issues a TLS server certificate for the registry itself.
 func (i *Issuer) IssueServerCert(dnsNames []string, ips []net.IP, validFor time.Duration) (*IssuedCert, error) {
-	if i.ca.cert == nil || i.ca.key == nil {
-		return nil, fmt.Errorf("CA not loaded; call LoadOrCreate first")
+	if err := i.checkSigning(); err != nil {
+		return nil, err
 	}
 	if validFor == 0 {
 		validFor = 365 * 24 * time.Hour
@@ -143,10 +225,24 @@ func (i *Issuer) VerifyAgentCert(certPEM string) (*x509.Certificate, error) {
 }
 
 // VerifyPeerCert verifies a parsed certificate against the CA (used by mTLS middleware).
+// In federated mode the verification chain goes up to the root CA pool with the
+// intermediate as an intermediary.
 func (i *Issuer) VerifyPeerCert(cert *x509.Certificate) (*x509.Certificate, error) {
-	opts := x509.VerifyOptions{
-		Roots:     i.ca.CertPool(),
-		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	var opts x509.VerifyOptions
+	if i.rootCAPool != nil && i.intermediateCert != nil {
+		// Federated: root pool as Roots, intermediate in Intermediates.
+		intermediates := x509.NewCertPool()
+		intermediates.AddCert(i.intermediateCert)
+		opts = x509.VerifyOptions{
+			Roots:         i.rootCAPool,
+			Intermediates: intermediates,
+			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		}
+	} else {
+		opts = x509.VerifyOptions{
+			Roots:     i.ca.CertPool(),
+			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		}
 	}
 	if _, err := cert.Verify(opts); err != nil {
 		return nil, fmt.Errorf("certificate not trusted: %w", err)
@@ -154,8 +250,12 @@ func (i *Issuer) VerifyPeerCert(cert *x509.Certificate) (*x509.Certificate, erro
 	return cert, nil
 }
 
-// CertPool exposes the CA's cert pool (so callers only need the Issuer, not the CAManager).
+// CertPool returns the pool appropriate for this issuer mode.
+// In federated mode returns the root CA pool (which anchors the full chain).
 func (i *Issuer) CertPool() *x509.CertPool {
+	if i.rootCAPool != nil {
+		return i.rootCAPool
+	}
 	return i.ca.CertPool()
 }
 
@@ -169,9 +269,33 @@ func AgentURIFromCert(cert *x509.Certificate) (string, error) {
 	return "", fmt.Errorf("no agent:// URI SAN found in certificate (CN=%s)", cert.Subject.CommonName)
 }
 
-// sign creates and signs a certificate with the CA.
+// checkSigning returns an error if neither root CA nor intermediate is ready.
+func (i *Issuer) checkSigning() error {
+	if i.intermediateCert != nil && i.intermediateKey != nil {
+		return nil
+	}
+	if i.ca != nil && i.ca.cert != nil && i.ca.key != nil {
+		return nil
+	}
+	return fmt.Errorf("CA not loaded; call LoadOrCreate first or configure intermediate CA")
+}
+
+// sign creates and signs a certificate.
+// Uses the intermediate CA when in federated mode, otherwise falls back to the root CAManager.
 func (i *Issuer) sign(template *x509.Certificate, pub *rsa.PublicKey, priv *rsa.PrivateKey) (*IssuedCert, error) {
-	certDER, err := x509.CreateCertificate(rand.Reader, template, i.ca.cert, pub, i.ca.key)
+	var (
+		parent    *x509.Certificate
+		signerKey interface{}
+	)
+	if i.intermediateCert != nil && i.intermediateKey != nil {
+		parent = i.intermediateCert
+		signerKey = i.intermediateKey
+	} else {
+		parent = i.ca.cert
+		signerKey = i.ca.key
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, parent, pub, signerKey)
 	if err != nil {
 		return nil, fmt.Errorf("create certificate: %w", err)
 	}

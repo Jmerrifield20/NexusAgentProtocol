@@ -128,6 +128,8 @@ const NAV = [
   { id: "trust-tiers",      label: "Trust Tiers" },
   { id: "dns-verification", label: "DNS-01 Verification" },
   { id: "a2a",              label: "A2A Compatibility" },
+  { id: "mcp-manifest",     label: "MCP Manifest" },
+  { id: "threat-scoring",   label: "Threat Scoring" },
   { id: "api-reference",    label: "API Reference" },
   { id: "trust-ledger",     label: "Trust Ledger" },
   { id: "auth",             label: "Authentication" },
@@ -238,9 +240,11 @@ export default function DeveloperContent() {
             </p>
             <p>
               Every activated agent receives a <strong>NAP Certification</strong> — a cryptographically signed endorsement JWT embedded
-              in an A2A-compatible agent card. This card can be deployed at{" "}
+              in an A2A-compatible agent card with declared skills. The card can be deployed at{" "}
               <code className="rounded bg-gray-100 px-1 py-0.5 font-mono">/.well-known/agent.json</code> on the agent's domain
-              so that both NAP-aware and A2A-compatible clients can discover and trust it.
+              so that both NAP-aware and A2A-compatible clients can discover and trust it. Agents may also declare{" "}
+              <strong>MCP tool definitions</strong> at registration, generating a machine-readable manifest served at a stable URL.
+              All registrations pass automatic <strong>threat scoring</strong> — potentially dangerous agents are rejected before they reach the registry.
             </p>
             <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-blue-800">
               <strong>Base URL (local dev):</strong>{" "}
@@ -253,14 +257,17 @@ export default function DeveloperContent() {
             <div className="grid gap-4 sm:grid-cols-2">
               {[
                 { term: "Trust Root",          def: "The org that anchors the agent's identity. For domain-verified agents this is the full verified domain (e.g. acme.com), proved via DNS-01 — so agent://acme.com/… can only ever be ACME, not acme.io or amazon.fakeaccount.com. For hosted agents it is always nap — the registry-controlled namespace." },
-                { term: "Capability Node",      def: "A label describing what the agent does — e.g. finance or support. Appears as the second segment of the agent:// URI (after the org namespace)." },
+                { term: "Capability Node",      def: "A label describing what the agent does — e.g. finance or support. Appears as the second segment of the agent:// URI (after the org namespace). Supports up to three levels separated by > (e.g. finance>accounting>reconciliation); sub-levels are indexed for search but not encoded in the URI." },
                 { term: "Agent ID",             def: "A short unique identifier generated at registration — e.g. agent_7x2v9q. Stable even if the endpoint URL changes." },
                 { term: "Endpoint",             def: "The physical HTTPS/gRPC URL where the agent currently listens. This is what resolve returns — callers use this to make requests." },
                 { term: "Trust Tier",           def: "A computed credibility label: Trusted (domain-verified + mTLS cert), Verified (domain-verified, no cert), Basic (NAP-hosted, activated), or Unverified (pending / revoked). Included in every agent listing." },
                 { term: "DNS-01 Challenge",     def: "The domain ownership proof mechanism. The registry issues a TXT record value; you publish it under _nexus-challenge.<domain> and call verify." },
                 { term: "Identity Certificate", def: "An X.509 cert signed by the Nexus CA, issued at activation for domain-verified agents. The private key is returned once and never stored by the registry." },
                 { term: "NAP Endorsement",      def: "A CA-signed RS256 JWT included in every activated agent's agent card. It attests the agent URI, trust tier, and cert serial. Verifiable via the registry's JWKS endpoint." },
-                { term: "A2A Card",             def: "A JSON file compatible with the Google Agent2Agent protocol, extended with nap:* fields. Deploy at /.well-known/agent.json on your domain so A2A clients can discover your agent." },
+                { term: "A2A Card",             def: "A JSON file compatible with the Google Agent2Agent protocol, extended with nap:* fields and a skills array. Deploy at /.well-known/agent.json on your domain, or fetch via the registry at /api/v1/agents/:id/agent.json." },
+                { term: "A2A Skills",           def: "Structured capability declarations embedded in the agent card. Each skill has an id, name, description, and optional tags array. Skills are auto-derived from the capability taxonomy if not explicitly provided at registration via the skills field." },
+                { term: "MCP Manifest",         def: "A Model Context Protocol tool manifest generated from mcp_tools declared at registration. Served at /api/v1/agents/:id/mcp-manifest.json and included in the activation response. Includes NAP extension fields (nap:uri, nap:trustTier, nap:registry)." },
+                { term: "Threat Score",         def: "A 0-100 safety score computed at registration time by rule-based analysis of the agent's name, description, endpoint, and capability. Registrations scoring ≥ 85 are rejected with HTTP 422. The full report (score, severity, findings) is returned in every register response." },
                 { term: "Trust Ledger",         def: "An append-only hash chain recording every registration and activation event. Anyone can independently verify the full history of any agent." },
                 { term: "Task Token",           def: "A short-lived RS256 JWT issued at activation. Required for protected operations like revoke and delete." },
                 { term: "Registration Type",    def: 'Either domain (company-owned domain, DNS-01 verified) or nap_hosted (free tier, hosted under nexusagentprotocol.com, email-verified).' },
@@ -309,22 +316,32 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \\
     "registration_type": "nap_hosted",
     "display_name":      "My Assistant",
     "description":       "Answers questions about my product",
-    "endpoint":          "https://api.example.com/assistant"
+    "capability":        "assistant",
+    "endpoint":          "https://api.example.com/assistant",
+    "skills": [
+      {"id": "answer", "name": "Answer Questions", "description": "Answers product questions", "tags": ["assistant"]}
+    ]
   }'
-# Returns: id, agent_id, uri (agent://nap/assistant/agent_xxx)`}</Code>
+# Returns:
+# {
+#   "agent":       { "id": "...", "agent_id": "...", "status": "pending", ... },
+#   "agent_uri":   "agent://nap/assistant/agent_xxx",
+#   "threat_report": { "score": 5, "severity": "none", "findings": [], "rejected": false }
+# }`}</Code>
               </div>
               <div>
                 <p className="font-medium text-gray-800 mb-2 text-xs">3 — Activate and receive your NAP Certification</p>
                 <Code>{`curl -s -X POST http://localhost:8080/api/v1/agents/<UUID>/activate
-# Returns agent_card_json — your A2A-compatible NAP certified card.
-# Deploy it at https://api.example.com/.well-known/agent.json`}</Code>
+# Returns agent_card_json (A2A-compatible NAP certified card with skills)
+# and mcp_manifest_json if mcp_tools were declared.
+# Deploy agent_card_json at https://api.example.com/.well-known/agent.json`}</Code>
               </div>
             </div>
 
             <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-4">
               <p className="font-semibold text-gray-900">Path B — Domain-Verified</p>
               <div>
-                <p className="font-medium text-gray-800 mb-2 text-xs">1 — Register</p>
+                <p className="font-medium text-gray-800 mb-2 text-xs">1 — Register (with optional skills and MCP tools)</p>
                 <Code>{`curl -s -X POST http://localhost:8080/api/v1/agents \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -333,8 +350,24 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \\
     "display_name":    "Acme Tax Agent",
     "description":     "Handles tax filing queries",
     "endpoint":        "https://agents.acme.com/tax",
-    "owner_domain":    "acme.com"
-  }'`}</Code>
+    "owner_domain":    "acme.com",
+    "skills": [
+      {"id": "tax-filing", "name": "Tax Filing", "description": "Automates tax form preparation", "tags": ["finance","tax"]}
+    ],
+    "mcp_tools": [
+      {
+        "name": "calculate_tax",
+        "description": "Calculate estimated tax liability",
+        "inputSchema": {"type":"object","properties":{"income":{"type":"number"},"year":{"type":"integer"}},"required":["income"]}
+      }
+    ]
+  }'
+# Returns:
+# {
+#   "agent":         { "id": "...", "status": "pending", ... },
+#   "agent_uri":     "agent://acme.com/finance/agent_xxx",
+#   "threat_report": { "score": 8, "severity": "none", "findings": [], "rejected": false }
+# }`}</Code>
               </div>
               <div>
                 <p className="font-medium text-gray-800 mb-2 text-xs">2 — Complete DNS-01 verification (see DNS-01 section)</p>
@@ -342,7 +375,8 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \\
               <div>
                 <p className="font-medium text-gray-800 mb-2 text-xs">3 — Activate</p>
                 <Code>{`curl -s -X POST http://localhost:8080/api/v1/agents/<UUID>/activate
-# Returns X.509 cert + private key + agent_card_json (Trusted tier)`}</Code>
+# Returns X.509 cert + private key + agent_card_json (Trusted tier)
+# + mcp_manifest_json with declared MCP tools`}</Code>
               </div>
             </div>
           </Section>
@@ -486,10 +520,11 @@ _nexus-challenge.acme.com.  IN  TXT  "nexus-verify=abc123xyz..."`}</Code>
               <strong>Google Agent2Agent (A2A) protocol</strong>. Every activated agent receives a ready-to-deploy
               JSON file — the <strong>NAP-certified agent card</strong> — that A2A clients can read natively.
               NAP-aware clients additionally verify the embedded <strong>NAP Endorsement</strong> JWT to confirm
-              the agent's trust tier.
+              the agent's trust tier. Agent cards include a <strong>skills</strong> array populated from declared
+              skills or automatically derived from the capability taxonomy.
             </p>
             <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-emerald-800 text-sm">
-              <strong>NAP Certification</strong> = A2A-compatible agent card + CA-signed endorsement JWT verifiable
+              <strong>NAP Certification</strong> = A2A-compatible agent card + skills array + CA-signed endorsement JWT verifiable
               via the registry's JWKS endpoint.
             </div>
             <p className="font-medium text-gray-800">What the activation response contains</p>
@@ -505,9 +540,13 @@ _nexus-challenge.acme.com.  IN  TXT  "nexus-verify=abc123xyz..."`}</Code>
   "ca_pem":          "-----BEGIN CERTIFICATE-----...",
   "warning":         "Store private_key_pem securely. It will not be shown again.",
 
-  // NAP Certification — your deployable A2A agent card
-  "agent_card_json": "{ \\"name\\": \\"Acme Tax Agent\\", ... }",
-  "agent_card_note": "Deploy agent_card_json at https://yourdomain/.well-known/agent.json"
+  // NAP Certification — your deployable A2A agent card (with skills)
+  "agent_card_json": "{ \\"name\\": \\"Acme Tax Agent\\", \\"skills\\": [...], ... }",
+  "agent_card_note": "Deploy agent_card_json at https://yourdomain/.well-known/agent.json",
+
+  // MCP tool manifest (only present if mcp_tools were declared at registration)
+  "mcp_manifest_json": "{ \\"schemaVersion\\": \\"2024-11-05\\", \\"tools\\": [...], ... }",
+  "mcp_manifest_note": "MCP manifest also available at /api/v1/agents/<UUID>/mcp-manifest.json"
 }`}</Code>
             <p className="font-medium text-gray-800">The agent card format</p>
             <Code>{`{
@@ -518,6 +557,16 @@ _nexus-challenge.acme.com.  IN  TXT  "nexus-verify=abc123xyz..."`}</Code>
   "version":     "1.0",
   "capabilities": { "streaming": false, "pushNotifications": false, "stateTransitionHistory": false },
 
+  // Skills — A2A spec field; auto-derived from capability taxonomy if not declared
+  "skills": [
+    {
+      "id":          "tax-filing",
+      "name":        "Tax Filing",
+      "description": "Automates tax form preparation",
+      "tags":        ["finance", "tax"]
+    }
+  ],
+
   // NAP extension fields (ignored by plain A2A clients)
   "nap:uri":         "agent://acme.com/finance/agent_7x2v9q",
   "nap:trust_tier":  "trusted",
@@ -525,6 +574,19 @@ _nexus-challenge.acme.com.  IN  TXT  "nexus-verify=abc123xyz..."`}</Code>
   "nap:cert_serial": "3f9a...",
   "nap:endorsement": "<RS256 JWT signed by the Nexus CA>"
 }`}</Code>
+            <p className="font-medium text-gray-800">Fetching agent cards from the registry</p>
+            <p>
+              Every agent has a stable card URL. The registry also serves an A2A-spec discovery card at{" "}
+              <code className="font-mono rounded bg-gray-100 px-1">/.well-known/agent.json</code> (first active agent for a domain):
+            </p>
+            <Code>{`# Per-agent A2A card (always available, even before deploying to your domain)
+curl http://localhost:8080/api/v1/agents/<UUID>/agent.json
+
+# NAP registry-wide discovery (backward-compatible format)
+curl "http://localhost:8080/.well-known/agent-card.json?domain=acme.com"
+
+# A2A-spec discovery card (standard format, first active agent for domain)
+curl "http://localhost:8080/.well-known/agent.json?domain=acme.com"`}</Code>
             <p className="font-medium text-gray-800">Deploying the card</p>
             <Code>{`# Write the card to your web server
 echo '<agent_card_json value>' > /var/www/html/.well-known/agent.json
@@ -546,22 +608,175 @@ jwt decode <nap:endorsement value>
 #   "nap:registry":     "https://registry.nexusagentprotocol.com",
 #   "exp":              1771234567
 # }`}</Code>
-            <p className="font-medium text-gray-800">NAP Registry discovery card</p>
-            <Code>{`curl "https://registry.nexusagentprotocol.com/.well-known/agent-card.json?domain=acme.com"
-# {
-#   "schema_version": "1.0",
-#   "domain":         "acme.com",
-#   "trust_root":     "acme.com",
-#   "agents": [
-#     {
-#       "uri":            "agent://acme.com/finance/agent_7x2v9q",
-#       "display_name":   "Acme Tax Agent",
-#       "endpoint":       "https://agents.acme.com/tax",
-#       "status":         "active",
-#       "nap:trust_tier": "trusted"
-#     }
-#   ]
-# }`}</Code>
+          </Section>
+
+          {/* MCP Manifest */}
+          <Section title="MCP Manifest" {...s("mcp-manifest")}>
+            <p>
+              Agents can declare their <strong>Model Context Protocol (MCP)</strong> tool definitions at registration time.
+              The registry generates a machine-readable manifest served at a stable URL, making it easy for MCP clients
+              (such as Claude Desktop) to discover and invoke the agent's tools.
+            </p>
+            <div className="rounded-lg border border-purple-100 bg-purple-50 px-4 py-3 text-purple-800 text-sm">
+              MCP manifests use schema version <code className="font-mono">2024-11-05</code> and are extended with{" "}
+              <code className="font-mono">nap:*</code> fields so clients can verify the agent's identity and trust tier.
+            </div>
+            <p className="font-medium text-gray-800">Declaring MCP tools at registration</p>
+            <Code>{`POST /api/v1/agents
+{
+  "display_name": "Finance Agent",
+  "capability":   "finance>accounting",
+  "endpoint":     "https://agents.acme.com/finance",
+  "owner_domain": "acme.com",
+  "mcp_tools": [
+    {
+      "name":        "get_account_balance",
+      "description": "Retrieve the current balance for a given account",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account_id": { "type": "string", "description": "Account identifier" },
+          "currency":   { "type": "string", "enum": ["USD","EUR","GBP"], "default": "USD" }
+        },
+        "required": ["account_id"]
+      }
+    },
+    {
+      "name":        "list_transactions",
+      "description": "List recent transactions with optional date range filter",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account_id": { "type": "string" },
+          "since":      { "type": "string", "format": "date" },
+          "limit":      { "type": "integer", "default": 20 }
+        },
+        "required": ["account_id"]
+      }
+    }
+  ]
+}`}</Code>
+            <p className="font-medium text-gray-800">The generated MCP manifest</p>
+            <Code>{`GET /api/v1/agents/<UUID>/mcp-manifest.json  →  200 OK
+
+{
+  "schemaVersion": "2024-11-05",
+  "name":          "Finance Agent",
+  "version":       "1.0",
+  "description":   "Accounting and financial tools",
+  "tools": [
+    {
+      "name":        "get_account_balance",
+      "description": "Retrieve the current balance for a given account",
+      "inputSchema": { "type": "object", "properties": { ... }, "required": ["account_id"] }
+    },
+    {
+      "name":        "list_transactions",
+      "description": "List recent transactions with optional date range filter",
+      "inputSchema": { ... }
+    }
+  ],
+  "nap:uri":       "agent://acme.com/finance/agent_7x2v9q",
+  "nap:trustTier": "trusted",
+  "nap:registry":  "https://registry.nexusagentprotocol.com"
+}`}</Code>
+            <p className="font-medium text-gray-800">Using with Claude Desktop</p>
+            <Code>{`# Point Claude Desktop at your agent's MCP manifest:
+# Add to your Claude Desktop config:
+{
+  "mcpServers": {
+    "finance-agent": {
+      "url": "https://registry.nexusagentprotocol.com/api/v1/agents/<UUID>/mcp-manifest.json"
+    }
+  }
+}`}</Code>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-gray-700 text-xs">
+              If no <code className="font-mono">mcp_tools</code> were declared at registration, the manifest endpoint returns{" "}
+              <code className="font-mono">404 Not Found</code>. MCP tools can be updated via{" "}
+              <code className="font-mono">PATCH /api/v1/agents/:id</code> in the metadata field.
+            </div>
+          </Section>
+
+          {/* Threat Scoring */}
+          <Section title="Threat Scoring" {...s("threat-scoring")}>
+            <p>
+              Every registration request is automatically analyzed by a rule-based threat scorer before it is accepted.
+              The scorer examines the agent's <strong>name</strong>, <strong>description</strong>, <strong>endpoint</strong>,
+              and <strong>capability</strong> for patterns associated with malicious or dangerous agents.
+            </p>
+            <div className="space-y-3">
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <p className="font-semibold text-gray-900 mb-2">Scoring rules</p>
+                <div className="space-y-2 text-xs text-gray-600">
+                  <div className="flex items-start gap-2">
+                    <span className="shrink-0 rounded bg-red-100 text-red-700 px-2 py-0.5 font-semibold">HIGH</span>
+                    <span><strong>Dangerous capability keywords</strong> — exec, shell, sudo, admin, root, system, kernel, daemon in capability name</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="shrink-0 rounded bg-red-100 text-red-700 px-2 py-0.5 font-semibold">HIGH</span>
+                    <span><strong>Malicious description phrases</strong> — exfiltrat, bypass, escalat, inject, exploit, payload, malware, ransomware, c2, botnet in description</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="shrink-0 rounded bg-yellow-100 text-yellow-700 px-2 py-0.5 font-semibold">MED</span>
+                    <span><strong>Non-HTTPS endpoint</strong> — plain HTTP endpoint in a production registration (non-localhost)</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="shrink-0 rounded bg-yellow-100 text-yellow-700 px-2 py-0.5 font-semibold">MED</span>
+                    <span><strong>Dangerous name keywords</strong> — shell executor, command executor, system agent, root agent in display name</span>
+                  </div>
+                </div>
+              </div>
+              <div className="grid sm:grid-cols-5 gap-2">
+                {[
+                  { label: "0–24",   sev: "none",     color: "bg-gray-100 text-gray-700",       note: "Clean" },
+                  { label: "25–49",  sev: "low",      color: "bg-blue-100 text-blue-700",       note: "Minor flags" },
+                  { label: "50–64",  sev: "medium",   color: "bg-yellow-100 text-yellow-700",   note: "Review" },
+                  { label: "65–84",  sev: "high",     color: "bg-orange-100 text-orange-700",   note: "Flagged" },
+                  { label: "85–100", sev: "critical",  color: "bg-red-100 text-red-700",         note: "Rejected" },
+                ].map((t) => (
+                  <div key={t.sev} className="rounded-lg border border-gray-200 bg-white p-3 text-center">
+                    <p className="font-mono text-xs text-gray-500 mb-1">{t.label}</p>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${t.color}`}>{t.sev}</span>
+                    <p className="text-xs text-gray-500 mt-1">{t.note}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p className="font-medium text-gray-800">Threat report in the register response</p>
+            <Code>{`POST /api/v1/agents  →  201 Created
+
+{
+  "agent": {
+    "id":     "550e8400-...",
+    "status": "pending",
+    ...
+  },
+  "agent_uri": "agent://acme.com/finance/agent_7x2v9q",
+  "threat_report": {
+    "score":    12,
+    "severity": "none",
+    "findings": [],
+    "rejected": false
+  }
+}`}</Code>
+            <p className="font-medium text-gray-800">Rejected registration (score ≥ 85)</p>
+            <Code>{`POST /api/v1/agents  →  422 Unprocessable Entity
+
+{
+  "error": "registration rejected: threat score 92"
+}
+
+# Example payload that would be rejected:
+{
+  "display_name": "shell executor",
+  "capability":   "devops>ci",
+  "description":  "executes arbitrary shell commands with root escalation bypass"
+}`}</Code>
+            <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3 text-amber-800 text-xs">
+              Scores between 65–84 are accepted but flagged as <strong>high severity</strong> in the threat report.
+              The full findings list explains which rules triggered and at what confidence level.
+              All scores are included in the register response for transparency.
+            </div>
           </Section>
 
           {/* API Reference */}
@@ -578,11 +793,13 @@ jwt decode <nap:endorsement value>
 
             <p className="font-semibold text-gray-800 pt-2">Agents</p>
             <div className="space-y-2">
-              <Endpoint method="POST"   path="/api/v1/agents"              description='Register a new agent. Set registration_type to "nap_hosted" with a Bearer user token for free-tier, or omit for domain-verified.' />
+              <Endpoint method="POST"   path="/api/v1/agents"              description='Register a new agent. Optional fields: skills (A2A skill declarations), mcp_tools (MCP tool definitions). Returns {"agent":{...},"agent_uri":"...","threat_report":{...}}. HTTP 422 if threat score ≥ 85.' />
               <Endpoint method="GET"    path="/api/v1/agents"              description="List registered agents. Supports query params: trust_root, capability_node, limit, offset." />
               <Endpoint method="GET"    path="/api/v1/agents/:id"          description="Get a single agent by UUID. Includes trust_tier in the response." />
               <Endpoint method="PATCH"  path="/api/v1/agents/:id"          description="Update mutable fields: display_name, description, endpoint, public_key_pem, metadata. Requires owning agent token or user JWT." auth />
-              <Endpoint method="POST"   path="/api/v1/agents/:id/activate" description="Activate an agent after verification. Returns X.509 cert (domain agents), NAP endorsement JWT, and agent_card_json for A2A deployment." />
+              <Endpoint method="POST"   path="/api/v1/agents/:id/activate" description="Activate an agent after verification. Returns X.509 cert (domain agents), NAP endorsement JWT, agent_card_json with skills, and mcp_manifest_json if MCP tools were declared." />
+              <Endpoint method="GET"    path="/api/v1/agents/:id/agent.json"       description="Fetch the A2A-spec agent card for a single agent. Includes skills array populated from declared skills or capability taxonomy. No auth required." />
+              <Endpoint method="GET"    path="/api/v1/agents/:id/mcp-manifest.json" description="Fetch the MCP tool manifest for a single agent. Returns 404 if no mcp_tools were declared at registration. No auth required." />
               <Endpoint method="POST"   path="/api/v1/agents/:id/revoke"   description="Revoke an agent's registration." auth />
               <Endpoint method="DELETE" path="/api/v1/agents/:id"          description="Permanently delete an agent. Must be the owning agent or carry nexus:admin scope." auth />
             </div>
@@ -590,7 +807,8 @@ jwt decode <nap:endorsement value>
             <p className="font-semibold text-gray-800 pt-2">Discovery</p>
             <div className="space-y-2">
               <Endpoint method="GET" path="/api/v1/resolve"                   description="Resolve an agent URI. Query params: trust_root, capability_node, agent_id. Returns endpoint, uri, status, and cert_serial." />
-              <Endpoint method="GET" path="/.well-known/agent-card.json"      description="NAP discovery card for a domain. Query param: domain=acme.com. Returns all active agents with nap:trust_tier per entry." />
+              <Endpoint method="GET" path="/.well-known/agent-card.json"      description="NAP discovery card for a domain (backward-compatible format). Query param: domain=acme.com. Returns all active agents with nap:trust_tier per entry." />
+              <Endpoint method="GET" path="/.well-known/agent.json"           description="A2A-spec discovery card for a domain. Query param: domain=acme.com. Returns the first active agent in standard A2A format with skills and nap:* extension fields." />
             </div>
 
             <p className="font-semibold text-gray-800 pt-2">DNS Verification</p>
@@ -697,12 +915,51 @@ if err != nil {
     log.Fatal(err)
 }
 
-result, err := c.Resolve(ctx, "acme.com", "finance", "agent_7x2v9q")
+result, err := c.Resolve(ctx, "agent://acme.com/finance/agent_7x2v9q")
 if err != nil {
     log.Fatal(err)
 }
 
 fmt.Println(result.Endpoint) // https://agents.acme.com/tax`}</Code>
+            <p className="font-medium text-gray-800">Register an agent (with skills and MCP tools)</p>
+            <Code>{`import (
+    "github.com/jmerrifield20/NexusAgentProtocol/pkg/agentcard"
+    "github.com/jmerrifield20/NexusAgentProtocol/pkg/client"
+    "github.com/jmerrifield20/NexusAgentProtocol/pkg/mcpmanifest"
+)
+
+result, err := c.RegisterAgent(ctx, client.RegisterAgentRequest{
+    TrustRoot:      "acme.com",
+    CapabilityNode: "finance",
+    DisplayName:    "Acme Tax Agent",
+    Endpoint:       "https://agents.acme.com/tax",
+    OwnerDomain:    "acme.com",
+    Skills: []agentcard.A2ASkill{
+        {ID: "tax-filing", Name: "Tax Filing", Description: "Automates tax form preparation", Tags: []string{"finance","tax"}},
+    },
+    MCPTools: []mcpmanifest.MCPTool{
+        {Name: "calculate_tax", Description: "Calculate estimated tax", InputSchema: json.RawMessage(\`{"type":"object"}\`)},
+    },
+})
+if err != nil {
+    log.Fatal(err) // includes threat rejection errors
+}
+fmt.Println(result.ID)  // UUID assigned by registry
+fmt.Println(result.URI) // agent://acme.com/finance/agent_xxx`}</Code>
+            <p className="font-medium text-gray-800">Fetch the A2A agent card</p>
+            <Code>{`card, err := c.GetAgentCard(ctx, "550e8400-...")
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(card.Name)   // "Acme Tax Agent"
+fmt.Println(card.Skills) // [{ID:"tax-filing", Name:"Tax Filing", ...}]`}</Code>
+            <p className="font-medium text-gray-800">Fetch the MCP manifest</p>
+            <Code>{`manifest, err := c.GetMCPManifest(ctx, "550e8400-...")
+if err != nil {
+    log.Fatal(err) // 404 if no mcp_tools were declared
+}
+fmt.Println(manifest.SchemaVersion) // "2024-11-05"
+fmt.Println(len(manifest.Tools))    // number of declared tools`}</Code>
             <p className="font-medium text-gray-800">mTLS client (agent-to-agent)</p>
             <Code>{`c, err := client.New("https://registry.nexusagentprotocol.com",
     client.WithMTLS(certPEM, keyPEM, caPEM),

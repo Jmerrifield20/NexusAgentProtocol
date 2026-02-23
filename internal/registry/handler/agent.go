@@ -90,6 +90,8 @@ func (h *AgentHandler) Register(rg *gin.RouterGroup) {
 		agents.POST("", h.optionalUserToken(), h.CreateAgent)
 		agents.GET("", h.ListAgents)
 		agents.GET("/:id", h.GetAgent)
+		agents.GET("/:id/agent.json", h.GetAgentCard)
+		agents.GET("/:id/mcp-manifest.json", h.GetMCPManifest)
 		agents.PATCH("/:id", h.optionalAgentToken(), h.optionalUserToken(), h.UpdateAgent)
 		agents.DELETE("/:id", h.optionalAgentToken(), h.optionalUserToken(), h.DeleteAgent)
 		agents.POST("/:id/activate", h.optionalAgentToken(), h.optionalUserToken(), h.ActivateAgent)
@@ -131,7 +133,21 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		req.Username = userClaims.Username
 	}
 
-	agent, err := h.svc.Register(c.Request.Context(), &req)
+	// Threat scoring — runs before any database writes.
+	ctx := c.Request.Context()
+	threatReport, err := h.svc.ScoreThreat(ctx, &req)
+	if err != nil {
+		h.logger.Warn("threat scoring failed (non-fatal)", zap.Error(err))
+	}
+	if threatReport != nil && threatReport.Rejected {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error":        "registration rejected: threat score too high",
+			"threat_report": threatReport,
+		})
+		return
+	}
+
+	agent, err := h.svc.Register(ctx, &req)
 	if err != nil {
 		h.logger.Error("register agent", zap.Error(err))
 		var valErr *model.ErrValidation
@@ -147,7 +163,14 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, agent)
+	resp := gin.H{
+		"agent":     agent,
+		"agent_uri": agent.URI(),
+	}
+	if threatReport != nil {
+		resp["threat_report"] = threatReport
+	}
+	c.JSON(http.StatusCreated, resp)
 }
 
 // ListAgents handles GET /agents — returns paginated agent list.
@@ -404,6 +427,11 @@ func (h *AgentHandler) ActivateAgent(c *gin.Context) {
 		resp["agent_card_note"] = "Deploy agent_card_json at https://yourdomain/.well-known/agent.json for A2A client discovery."
 	}
 
+	if result.MCPManifestJSON != "" {
+		resp["mcp_manifest_json"] = result.MCPManifestJSON
+		resp["mcp_manifest_note"] = "mcp_manifest_json describes the MCP tools this agent exposes."
+	}
+
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -621,6 +649,67 @@ func (h *AgentHandler) GetCapabilities(c *gin.Context) {
 		result[i] = category{Name: cat, Subcategories: subItems}
 	}
 	c.JSON(http.StatusOK, gin.H{"categories": result})
+}
+
+// GetAgentCard handles GET /agents/:id/agent.json — returns the A2A-spec card for a single agent.
+func (h *AgentHandler) GetAgentCard(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid agent ID"})
+		return
+	}
+
+	agent, err := h.svc.Get(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get agent"})
+		return
+	}
+
+	cardJSON, err := h.svc.GetAgentCardJSON(agent)
+	if err != nil {
+		h.logger.Error("generate agent card", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate agent card"})
+		return
+	}
+
+	c.Header("Content-Type", "application/json")
+	c.String(http.StatusOK, cardJSON)
+}
+
+// GetMCPManifest handles GET /agents/:id/mcp-manifest.json — returns the MCP manifest for an agent.
+func (h *AgentHandler) GetMCPManifest(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid agent ID"})
+		return
+	}
+
+	agent, err := h.svc.Get(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get agent"})
+		return
+	}
+
+	manifest, err := h.svc.GenerateMCPManifest(agent)
+	if err != nil {
+		h.logger.Error("generate MCP manifest", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate MCP manifest"})
+		return
+	}
+	if manifest == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent has no declared MCP tools"})
+		return
+	}
+
+	c.JSON(http.StatusOK, manifest)
 }
 
 // isQuotaError returns true if the error is a free-tier quota violation.

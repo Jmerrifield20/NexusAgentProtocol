@@ -7,6 +7,8 @@ registry:
   write_timeout_seconds: 30
   idle_timeout_seconds: 120
   frontend_url: "http://localhost:3000"   # base URL of the web frontend (used in email links)
+  role: standalone                        # standalone | federated | root
+  admin_secret: ""                        # set via REGISTRY_ADMIN_SECRET env var — never commit a value here
 
 database:
   url: "postgres://nexus:nexus@localhost:5432/nexus?sslmode=disable"
@@ -39,6 +41,13 @@ email:
   smtp_username: ""
   smtp_password: ""
   from_address: "noreply@nexusagentprotocol.com"
+
+federation:
+  root_registry_url: ""           # federated mode: NAP root registry base URL
+  intermediate_ca_cert: ""        # federated mode: path to intermediate CA cert PEM file
+  intermediate_ca_key: ""         # federated mode: path to intermediate CA key PEM file
+  dns_discovery_enabled: true
+  remote_resolve_timeout: 5s
 
 oauth:
   github:

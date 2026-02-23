@@ -286,6 +286,13 @@ func registerAgent(t *testing.T, router *gin.Engine) map[string]any {
 	}
 	var result map[string]any
 	json.Unmarshal(w.Body.Bytes(), &result)
+	// Register response is now {"agent": {...}, "agent_uri": "..."}. Unwrap the
+	// inner agent map so callers can access fields directly (backward compat).
+	if inner, ok := result["agent"]; ok {
+		if agentMap, ok := inner.(map[string]any); ok {
+			return agentMap
+		}
+	}
 	return result
 }
 
@@ -311,8 +318,10 @@ func TestCreateAgent_201(t *testing.T) {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var agent map[string]any
-	json.Unmarshal(w.Body.Bytes(), &agent)
+	// Register response shape: {"agent": {...}, "agent_uri": "..."}
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	agent := resp["agent"].(map[string]any)
 	if agent["status"] != "pending" {
 		t.Errorf("expected pending status, got %v", agent["status"])
 	}

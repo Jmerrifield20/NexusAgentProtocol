@@ -10,8 +10,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// WellKnownHandler serves the /.well-known/agent-card.json endpoint.
-// It lists all active agents for a domain and returns a standard AgentCard.
+// WellKnownHandler serves /.well-known/agent-card.json and /.well-known/agent.json.
 type WellKnownHandler struct {
 	svc    *service.AgentService
 	logger *zap.Logger
@@ -67,6 +66,47 @@ func (h *WellKnownHandler) ServeAgentCard(c *gin.Context) {
 		TrustRoot:     trustRoot,
 		Agents:        entries,
 		UpdatedAt:     time.Now().UTC(),
+	}
+
+	c.JSON(http.StatusOK, card)
+}
+
+// ServeA2ACard handles GET /.well-known/agent.json?domain=example.com
+//
+// Returns the first active agent for the domain as an A2A-spec-compliant card.
+// This endpoint is the standard location that A2A-aware clients discover agents from.
+// Returns 400 if domain is missing, 404 if no active agents are found for the domain.
+func (h *WellKnownHandler) ServeA2ACard(c *gin.Context) {
+	domain := c.Query("domain")
+	if domain == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "domain query parameter is required"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	agents, err := h.svc.ListByOwnerDomain(ctx, domain, 1, 0)
+	if err != nil {
+		h.logger.Error("list agents for A2A card", zap.String("domain", domain), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up domain"})
+		return
+	}
+
+	if len(agents) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no active agents found for domain"})
+		return
+	}
+
+	a := agents[0]
+	tier := a.ComputeTrustTier()
+
+	card := agentcard.A2ACard{
+		Name:         a.DisplayName,
+		Description:  a.Description,
+		URL:          a.Endpoint,
+		Version:      "1.0",
+		Capabilities: agentcard.A2ACapabilities{},
+		NAPURI:       a.URI(),
+		NAPTrustTier: string(tier),
 	}
 
 	c.JSON(http.StatusOK, card)

@@ -91,15 +91,11 @@ func (h *IdentityHandler) IssueToken(c *gin.Context) {
 
 // GetCACert handles GET /api/v1/ca.crt — returns the Nexus CA certificate in PEM format.
 // Clients download this to configure their TLS trust store before connecting with mTLS.
+// In federated mode the intermediate CA cert is returned so remote clients can
+// validate certificates issued by this registry.
 func (h *IdentityHandler) GetCACert(c *gin.Context) {
-	// The CA cert is embedded in the Issuer via the CAManager.
-	// We surface it through the token issuer's public key endpoint instead of
-	// coupling the handler to the CAManager directly.
-	// For now we return a helpful redirect message.
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Download the CA certificate from the filesystem or the JWKS endpoint.",
-		"jwks_uri": "/.well-known/jwks.json",
-	})
+	c.Header("Content-Type", "application/x-pem-file")
+	c.String(http.StatusOK, h.issuer.CACertPEM())
 }
 
 // defaultScopes returns the standard set of Task Token scopes.

@@ -10,6 +10,15 @@ import {
 
 const REGISTRY = process.env.NEXT_PUBLIC_REGISTRY_URL ?? "http://localhost:8080";
 
+// ── A2A card types ────────────────────────────────────────────────────────────
+
+interface A2ASkill {
+  id:          string;
+  name:        string;
+  description: string;
+  tags?:       string[];
+}
+
 // ── Badges ────────────────────────────────────────────────────────────────────
 
 function TierBadge({ tier }: { tier: string }) {
@@ -79,6 +88,7 @@ export default function AgentDetailPage() {
   const [agent, setAgent]     = useState<Agent | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [skills, setSkills]   = useState<A2ASkill[]>([]);
 
   const [form, setForm]       = useState<EditForm | null>(null);
   const [saving, setSaving]   = useState(false);
@@ -90,14 +100,21 @@ export default function AgentDetailPage() {
   // ── Load agent ──
 
   const loadAgent = async () => {
-    const resp = await fetch(`${REGISTRY}/api/v1/agents/${params.id}`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    });
+    const [resp, cardResp] = await Promise.all([
+      fetch(`${REGISTRY}/api/v1/agents/${params.id}`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      }),
+      fetch(`${REGISTRY}/api/v1/agents/${params.id}/agent.json`).catch(() => null),
+    ]);
     if (resp.status === 404) { setNotFound(true); setLoading(false); return; }
     if (!resp.ok) { setLoading(false); return; }
     const data = await resp.json() as Agent;
     setAgent(data);
     setForm(formFromAgent(data));
+    if (cardResp?.ok) {
+      const card = await cardResp.json() as { skills?: A2ASkill[] };
+      setSkills(card.skills ?? []);
+    }
     setLoading(false);
   };
 
@@ -276,6 +293,30 @@ export default function AgentDetailPage() {
           </DetailRow>
         )}
 
+        {skills.length > 0 && (
+          <DetailRow label="Skills">
+            <div className="flex flex-col gap-2">
+              {skills.map((sk) => (
+                <div key={sk.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                  <p className="text-xs font-semibold text-gray-800">{sk.name}</p>
+                  {sk.description && (
+                    <p className="text-xs text-gray-500 mt-0.5">{sk.description}</p>
+                  )}
+                  {sk.tags && sk.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {sk.tags.map((t) => (
+                        <span key={t} className="rounded-full bg-indigo-50 text-indigo-600 px-2 py-0.5 text-xs">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </DetailRow>
+        )}
+
         {agent.support_url && (
           <DetailRow label="Support URL">
             <a href={agent.support_url} target="_blank" rel="noreferrer"
@@ -312,6 +353,43 @@ export default function AgentDetailPage() {
           </DetailRow>
         )}
       </div>
+
+      {/* Integration links */}
+      {agent.status === "active" && (
+        <div className="rounded-xl border border-gray-200 bg-white px-6 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">Integration</p>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-medium text-gray-700">A2A Agent Card</p>
+                <p className="text-xs text-gray-400">A2A-spec JSON with skills and NAP endorsement. Deploy at <code className="font-mono">/.well-known/agent.json</code></p>
+              </div>
+              <a
+                href={`${REGISTRY}/api/v1/agents/${agent.id}/agent.json`}
+                target="_blank"
+                rel="noreferrer"
+                className="shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-nexus-400 hover:text-nexus-500 transition-colors"
+              >
+                View JSON
+              </a>
+            </div>
+            <div className="flex items-center justify-between gap-4 border-t border-gray-50 pt-3">
+              <div>
+                <p className="text-xs font-medium text-gray-700">MCP Manifest</p>
+                <p className="text-xs text-gray-400">Model Context Protocol tool definitions (if declared at registration)</p>
+              </div>
+              <a
+                href={`${REGISTRY}/api/v1/agents/${agent.id}/mcp-manifest.json`}
+                target="_blank"
+                rel="noreferrer"
+                className="shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-nexus-400 hover:text-nexus-500 transition-colors"
+              >
+                View JSON
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit form */}
       <div className="rounded-xl border border-gray-200 bg-white px-6 py-5">

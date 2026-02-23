@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -16,10 +17,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/email"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/federation"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/identity"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/handler"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/repository"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/service"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/threat"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/trustledger"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/users"
 	"github.com/spf13/viper"
@@ -62,6 +65,13 @@ func run(logger *zap.Logger) error {
 	viper.SetDefault("email.smtp_password", "")
 	viper.SetDefault("email.from_address", "noreply@nexusagentprotocol.com")
 	viper.SetDefault("registry.frontend_url", "http://localhost:3000")
+	viper.SetDefault("registry.role", "standalone")
+	viper.SetDefault("registry.admin_secret", "")
+	viper.SetDefault("federation.root_registry_url", "")
+	viper.SetDefault("federation.intermediate_ca_cert", "")
+	viper.SetDefault("federation.intermediate_ca_key", "")
+	viper.SetDefault("federation.dns_discovery_enabled", true)
+	viper.SetDefault("federation.remote_resolve_timeout", "5s")
 
 	if err := viper.ReadInConfig(); err != nil {
 		var cfgNotFound viper.ConfigFileNotFoundError
@@ -157,6 +167,7 @@ func run(logger *zap.Logger) error {
 	svc.SetFreeTierConfig(freeTierCfg)
 	svc.SetTokenIssuer(tokens)
 	svc.SetRegistryURL(issuerURL)
+	svc.SetThreatScorer(threat.NewRuleBasedScorer())
 
 	// User service
 	userRepo := users.NewUserRepository(db)
@@ -180,6 +191,77 @@ func run(logger *zap.Logger) error {
 	viper.SetDefault("oauth.github.redirect_url", fmt.Sprintf("http://localhost:%d/api/v1/auth/oauth/github/callback", httpPort))
 	viper.SetDefault("oauth.google.redirect_url", fmt.Sprintf("http://localhost:%d/api/v1/auth/oauth/google/callback", httpPort))
 
+	// ── Federation (role-based wiring) ───────────────────────────────────────
+	role := federation.Role(viper.GetString("registry.role"))
+	resolveTimeout, _ := time.ParseDuration(viper.GetString("federation.remote_resolve_timeout"))
+	if resolveTimeout == 0 {
+		resolveTimeout = 5 * time.Second
+	}
+	dnsFedEnabled := viper.GetBool("federation.dns_discovery_enabled")
+
+	var fedHandler *handler.FederationHandler
+	switch role {
+	case federation.RoleRoot:
+		fedRepo := federation.NewFederationRepository(db, logger)
+		fedSvc := federation.NewFederationService(fedRepo, issuer, logger)
+		fedHandler = handler.NewFederationHandler(fedSvc, role, userTokens, logger)
+		resolver := federation.NewRemoteResolver(fedSvc, "", dnsFedEnabled, resolveTimeout, logger)
+		svc.SetRemoteResolver(resolver)
+		logger.Info("federation role: root — registry-of-registries enabled")
+
+	case federation.RoleFederated:
+		certPath := viper.GetString("federation.intermediate_ca_cert")
+		keyPath := viper.GetString("federation.intermediate_ca_key")
+		rootURL := viper.GetString("federation.root_registry_url")
+
+		if certPath != "" && keyPath != "" {
+			certPEM, certErr := os.ReadFile(certPath)
+			keyPEM, keyErr := os.ReadFile(keyPath)
+			if certErr != nil || keyErr != nil {
+				logger.Warn("federated mode: cannot read intermediate CA files; falling back to local CA",
+					zap.String("cert_path", certPath),
+					zap.String("key_path", keyPath),
+				)
+			} else {
+				intermediateCert, intermediateKey, parseErr := identity.LoadCertAndKey(certPEM, keyPEM)
+				if parseErr != nil {
+					logger.Warn("federated mode: cannot parse intermediate CA; falling back to local CA",
+						zap.Error(parseErr),
+					)
+				} else {
+					// Fetch root CA pool from the configured root registry.
+					var rootCAPool *x509.CertPool
+					if rootURL != "" {
+						caURL := rootURL + "/api/v1/ca.crt"
+						pool, fetchErr := identity.FetchRootCAPool(context.Background(), caURL, 10*time.Second)
+						if fetchErr != nil {
+							logger.Warn("federated mode: cannot fetch root CA pool; using system pool",
+								zap.String("url", caURL),
+								zap.Error(fetchErr),
+							)
+						} else {
+							rootCAPool = pool
+						}
+					}
+					issuer = identity.NewIssuerWithIntermediate(intermediateCert, intermediateKey, rootCAPool)
+					logger.Info("federation role: federated — intermediate CA loaded",
+						zap.String("cn", intermediateCert.Subject.CommonName),
+					)
+				}
+			}
+		}
+
+		fedRepo := federation.NewFederationRepository(db, logger)
+		fedSvc := federation.NewFederationService(fedRepo, nil, logger) // nil issuer: cannot issue sub-CAs
+		fedHandler = handler.NewFederationHandler(fedSvc, role, userTokens, logger)
+		resolver := federation.NewRemoteResolver(nil, rootURL, dnsFedEnabled, resolveTimeout, logger)
+		svc.SetRemoteResolver(resolver)
+		logger.Info("federation role: federated")
+
+	default:
+		logger.Info("federation role: standalone")
+	}
+
 	agentHandler := handler.NewAgentHandler(svc, tokens, logger)
 	agentHandler.SetUserTokenIssuer(userTokens)
 	identityHandler := handler.NewIdentityHandler(issuer, tokens, logger)
@@ -188,6 +270,7 @@ func run(logger *zap.Logger) error {
 	wkHandler := handler.NewWellKnownHandler(svc, logger)
 	authHandler := handler.NewAuthHandler(userSvc, userTokens, oauthCfgs, logger)
 	authHandler.SetFrontendURL(viper.GetString("registry.frontend_url"))
+	authHandler.SetAdminSecret(viper.GetString("registry.admin_secret"))
 
 	// ── HTTP Router ───────────────────────────────────────────────────────────
 	if os.Getenv("GIN_MODE") == "" {
@@ -239,8 +322,9 @@ func run(logger *zap.Logger) error {
 	// OIDC well-known endpoints (public)
 	oidcProvider.RegisterWellKnown(router)
 
-	// Agent discovery endpoint (public)
+	// Agent discovery endpoints (public)
 	router.GET("/.well-known/agent-card.json", wkHandler.ServeAgentCard)
+	router.GET("/.well-known/agent.json", wkHandler.ServeA2ACard)
 
 	// API v1
 	v1 := router.Group("/api/v1")
@@ -249,6 +333,9 @@ func run(logger *zap.Logger) error {
 	ledgerHandler.Register(v1)
 	dnsHandler.Register(v1)
 	authHandler.Register(v1)
+	if fedHandler != nil {
+		fedHandler.Register(v1)
+	}
 
 	// ── TLS Server (mTLS) on port 8443 ────────────────────────────────────────
 	tlsEnabled := viper.GetBool("identity.tls_enabled")

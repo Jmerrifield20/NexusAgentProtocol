@@ -136,6 +136,40 @@ func RequireUserToken(tokens *UserTokenIssuer) gin.HandlerFunc {
 	}
 }
 
+// RequireAdmin returns a Gin middleware that enforces a valid admin Bearer token.
+// Only tokens with Type="admin" and Role="admin" are accepted.
+// Use this on all federation management routes.
+func RequireAdmin(tokens *UserTokenIssuer) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "admin Bearer token required",
+			})
+			return
+		}
+
+		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+		claims, err := tokens.Verify(tokenStr)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid token: " + err.Error(),
+			})
+			return
+		}
+
+		if claims.Role != "admin" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "admin role required",
+			})
+			return
+		}
+
+		c.Set(ctxUserClaims, claims)
+		c.Next()
+	}
+}
+
 // UserClaimsFromCtx retrieves the user token claims injected by RequireUserToken.
 // Returns nil if no user token is present in the context.
 func UserClaimsFromCtx(c *gin.Context) *UserTokenClaims {

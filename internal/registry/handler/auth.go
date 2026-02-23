@@ -2,12 +2,14 @@ package handler
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -44,6 +46,7 @@ type AuthHandler struct {
 	tokens      *identity.UserTokenIssuer
 	oauthCfgs   map[string]*oauth2.Config
 	frontendURL string // used to redirect after OAuth callback
+	adminSecret string // static secret for bootstrapping admin tokens; empty = disabled
 	logger      *zap.Logger
 }
 
@@ -68,6 +71,12 @@ func NewAuthHandler(
 // SetFrontendURL sets the base URL of the frontend for OAuth callback redirects.
 func (h *AuthHandler) SetFrontendURL(url string) {
 	h.frontendURL = url
+}
+
+// SetAdminSecret configures the static bootstrap secret for admin token issuance.
+// When empty, the /auth/admin-token endpoint returns 404.
+func (h *AuthHandler) SetAdminSecret(secret string) {
+	h.adminSecret = secret
 }
 
 // buildOAuthConfigs converts the raw provider config map into oauth2.Config instances.
@@ -111,6 +120,7 @@ func (h *AuthHandler) Register(rg *gin.RouterGroup) {
 		auth.POST("/resend-verification", h.ResendVerification)
 		auth.POST("/forgot-password", h.ForgotPassword)
 		auth.POST("/reset-password", h.ResetPassword)
+		auth.POST("/admin-token", h.IssueAdminToken)
 		auth.GET("/oauth/:provider", h.OAuthRedirect)
 		auth.GET("/oauth/:provider/callback", h.OAuthCallback)
 	}
@@ -307,6 +317,55 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "password updated — please log in with your new password"})
+}
+
+// IssueAdminToken handles POST /auth/admin-token.
+// Callers exchange the static admin secret for a short-lived admin JWT.
+// Returns 404 when admin_secret is not configured (disabled by default).
+//
+//	Request: { "secret": "<admin_secret>", "ttl_hours": 8 }
+//	Response: { "token": "<admin JWT>", "expires_in": 28800 }
+func (h *AuthHandler) IssueAdminToken(c *gin.Context) {
+	if h.adminSecret == "" {
+		// Appear as Not Found rather than Unauthorized to avoid revealing the endpoint.
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+
+	var req struct {
+		Secret   string `json:"secret"    binding:"required"`
+		TTLHours int    `json:"ttl_hours"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "secret is required"})
+		return
+	}
+
+	// Constant-time comparison to prevent timing attacks.
+	if subtle.ConstantTimeCompare([]byte(req.Secret), []byte(h.adminSecret)) != 1 {
+		h.logger.Warn("failed admin-token attempt", zap.String("remote_ip", c.ClientIP()))
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid secret"})
+		return
+	}
+
+	ttl := time.Duration(req.TTLHours) * time.Hour
+	if ttl <= 0 || ttl > 24*time.Hour {
+		ttl = 8 * time.Hour // default: 8 hours, max: 24 hours
+	}
+
+	tok, err := h.tokens.IssueAdminToken(ttl)
+	if err != nil {
+		h.logger.Error("issue admin token", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "token issuance failed"})
+		return
+	}
+
+	h.logger.Info("admin token issued", zap.String("remote_ip", c.ClientIP()), zap.Duration("ttl", ttl))
+
+	c.JSON(http.StatusOK, gin.H{
+		"token":      tok,
+		"expires_in": int(ttl.Seconds()),
+	})
 }
 
 // OAuthRedirect handles GET /auth/oauth/:provider — redirects to the OAuth provider.

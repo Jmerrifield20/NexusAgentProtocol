@@ -44,11 +44,14 @@ func stubRegistryServer(t *testing.T) *httptest.Server {
 		case http.MethodPost:
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{
-				"id":              "550e8400-e29b-41d4-a716-446655440000",
-				"trust_root":      "nexusagentprotocol.com",
-				"capability_node": "finance/taxes",
-				"agent_id":        "agent_test123",
-				"status":          "pending",
+				"agent": map[string]any{
+					"id":              "550e8400-e29b-41d4-a716-446655440000",
+					"trust_root":      "nexusagentprotocol.com",
+					"capability_node": "finance/taxes",
+					"agent_id":        "agent_test123",
+					"status":          "pending",
+				},
+				"agent_uri": "agent://nexusagentprotocol.com/finance/taxes/agent_test123",
 			})
 		case http.MethodGet:
 			json.NewEncoder(w).Encode(map[string]any{

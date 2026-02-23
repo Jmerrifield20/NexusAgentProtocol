@@ -16,7 +16,8 @@ type UserTokenClaims struct {
 	UserID   string `json:"user_id"`
 	Email    string `json:"email"`
 	Username string `json:"username"`
-	Type     string `json:"type"` // "user" or "oauth-state"
+	Type     string `json:"type"` // "user", "admin", or "oauth-state"
+	Role     string `json:"role,omitempty"` // "admin" when set
 }
 
 // UserTokenIssuer issues and verifies user session JWTs using the Nexus CA RSA key.
@@ -88,10 +89,38 @@ func (u *UserTokenIssuer) Verify(tokenStr string) (*UserTokenClaims, error) {
 	if !ok || !token.Valid {
 		return nil, fmt.Errorf("invalid user token claims")
 	}
-	if claims.Type != "user" {
+	if claims.Type != "user" && claims.Type != "admin" {
 		return nil, fmt.Errorf("not a user session token")
 	}
 	return claims, nil
+}
+
+// IssueAdminToken creates a signed admin token. Admin tokens carry Type="admin"
+// and Role="admin" and are used to authenticate federation management endpoints.
+// They are issued only in exchange for the static admin secret — never via OAuth or password.
+func (u *UserTokenIssuer) IssueAdminToken(ttl time.Duration) (string, error) {
+	if ttl == 0 {
+		ttl = 8 * time.Hour
+	}
+	now := time.Now().UTC()
+	claims := UserTokenClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    u.issuer,
+			Subject:   "admin",
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+			ID:        uuid.New().String(),
+		},
+		UserID: "admin",
+		Type:   "admin",
+		Role:   "admin",
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	signed, err := token.SignedString(u.key)
+	if err != nil {
+		return "", fmt.Errorf("sign admin token: %w", err)
+	}
+	return signed, nil
 }
 
 // IssueOAuthState creates a short-lived JWT used as the OAuth state parameter.

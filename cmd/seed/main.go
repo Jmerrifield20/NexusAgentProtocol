@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -20,6 +21,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/agentcard"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/mcpmanifest"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -138,6 +141,14 @@ type seedAgent struct {
 	Tags             []string
 	SupportURL       string
 	CreatedAt        time.Time
+
+	// A2A skills declared at registration. When empty the registry auto-derives
+	// one skill from the capability taxonomy (same logic as the live path).
+	Skills []agentcard.A2ASkill
+
+	// MCP tool definitions. Stored as metadata["_mcp_tools"] so the endpoint
+	// GET /api/v1/agents/:id/mcp-manifest.json can serve them.
+	MCPTools []mcpmanifest.MCPTool
 }
 
 func ptr(u uuid.UUID) *uuid.UUID { return &u }
@@ -145,6 +156,9 @@ func ptr(u uuid.UUID) *uuid.UUID { return &u }
 var alice = ptr(uuid.MustParse("00000000-0000-0000-0000-000000000001"))
 var bob   = ptr(uuid.MustParse("00000000-0000-0000-0000-000000000002"))
 var carol = ptr(uuid.MustParse("00000000-0000-0000-0000-000000000003"))
+
+// rawSchema is a convenience helper for inline JSON Schema objects.
+func rawSchema(s string) json.RawMessage { return json.RawMessage(s) }
 
 var agents = []seedAgent{
 
@@ -166,6 +180,23 @@ var agents = []seedAgent{
 		Tags:             []string{"tax", "filing", "accounting", "usa"},
 		SupportURL:       "https://docs.acme.com/agents/tax-advisor",
 		CreatedAt:        daysAgo(120),
+		Skills: []agentcard.A2ASkill{
+			{ID: "tax-filing", Name: "Tax Filing", Description: "Prepare and file federal and state tax returns", Tags: []string{"tax", "filing", "irs"}},
+			{ID: "deduction-analysis", Name: "Deduction Analysis", Description: "Identify eligible deductions and tax credits from financial records", Tags: []string{"tax", "optimization"}},
+			{ID: "tax-query", Name: "Tax Q&A", Description: "Answer ad-hoc tax questions in plain English", Tags: []string{"tax", "qa"}},
+		},
+		MCPTools: []mcpmanifest.MCPTool{
+			{
+				Name:        "file_return",
+				Description: "File a tax return for the specified fiscal year",
+				InputSchema: rawSchema(`{"type":"object","required":["fiscal_year","entity_type"],"properties":{"fiscal_year":{"type":"integer","description":"e.g. 2024"},"entity_type":{"type":"string","enum":["individual","corporation","partnership"]}}}`),
+			},
+			{
+				Name:        "estimate_deductions",
+				Description: "Estimate eligible deductions from provided income and expense data",
+				InputSchema: rawSchema(`{"type":"object","required":["income","expenses"],"properties":{"income":{"type":"number"},"expenses":{"type":"object","additionalProperties":{"type":"number"}}}}`),
+			},
+		},
 	},
 	// URI: agent://stripe.com/commerce/agent_checkout-bot
 	{
@@ -184,6 +215,23 @@ var agents = []seedAgent{
 		Tags:             []string{"payments", "checkout", "refunds", "disputes"},
 		SupportURL:       "https://stripe.com/docs/agents",
 		CreatedAt:        daysAgo(200),
+		Skills: []agentcard.A2ASkill{
+			{ID: "payment-processing", Name: "Payment Processing", Description: "Create and manage payment intents", Tags: []string{"stripe", "payments"}},
+			{ID: "refund-management", Name: "Refund Management", Description: "Process full and partial refunds", Tags: []string{"stripe", "refunds"}},
+			{ID: "dispute-resolution", Name: "Dispute Resolution", Description: "Respond to chargebacks with supporting evidence", Tags: []string{"stripe", "disputes"}},
+		},
+		MCPTools: []mcpmanifest.MCPTool{
+			{
+				Name:        "create_payment_intent",
+				Description: "Create a Stripe payment intent for the given amount and currency",
+				InputSchema: rawSchema(`{"type":"object","required":["amount","currency"],"properties":{"amount":{"type":"integer","description":"Amount in smallest currency unit (e.g. cents)"},"currency":{"type":"string","description":"ISO 4217 code, e.g. usd"},"customer_id":{"type":"string"}}}`),
+			},
+			{
+				Name:        "issue_refund",
+				Description: "Issue a full or partial refund for a charge",
+				InputSchema: rawSchema(`{"type":"object","required":["charge_id"],"properties":{"charge_id":{"type":"string"},"amount":{"type":"integer","description":"Amount to refund in smallest unit; omit for full refund"}}}`),
+			},
+		},
 	},
 	// URI: agent://salesforce.com/commerce/agent_pipeline-mgr
 	{
@@ -202,6 +250,22 @@ var agents = []seedAgent{
 		Tags:             []string{"crm", "pipeline", "sales", "deals"},
 		SupportURL:       "https://help.salesforce.com/agents",
 		CreatedAt:        daysAgo(90),
+		Skills: []agentcard.A2ASkill{
+			{ID: "pipeline-monitoring", Name: "Pipeline Monitoring", Description: "Track deal health across pipeline stages", Tags: []string{"crm", "pipeline"}},
+			{ID: "follow-up-drafting", Name: "Follow-up Drafting", Description: "Generate personalised follow-up emails for stalled deals", Tags: []string{"sales", "email"}},
+		},
+		MCPTools: []mcpmanifest.MCPTool{
+			{
+				Name:        "get_stalled_deals",
+				Description: "Return deals that have not progressed in the last N days",
+				InputSchema: rawSchema(`{"type":"object","required":["days_stalled"],"properties":{"days_stalled":{"type":"integer","minimum":1},"stage":{"type":"string"}}}`),
+			},
+			{
+				Name:        "draft_followup",
+				Description: "Draft a follow-up email for a specific deal",
+				InputSchema: rawSchema(`{"type":"object","required":["deal_id"],"properties":{"deal_id":{"type":"string"},"tone":{"type":"string","enum":["professional","friendly","urgent"]}}}`),
+			},
+		},
 	},
 
 	// ── Verified (domain-verified + active, no cert) ──────────────────────────
@@ -221,6 +285,17 @@ var agents = []seedAgent{
 		Tags:             []string{"code-review", "security", "typescript", "go"},
 		SupportURL:       "https://github.com/techcorp/agents",
 		CreatedAt:        daysAgo(45),
+		Skills: []agentcard.A2ASkill{
+			{ID: "pr-review", Name: "Pull Request Review", Description: "Automated review of GitHub pull requests for bugs, style, and security", Tags: []string{"github", "pr"}},
+			{ID: "security-audit", Name: "Security Audit", Description: "Detect OWASP top-10 patterns and common vulnerabilities in code", Tags: []string{"security", "owasp"}},
+		},
+		MCPTools: []mcpmanifest.MCPTool{
+			{
+				Name:        "review_pr",
+				Description: "Review a GitHub pull request and return structured findings",
+				InputSchema: rawSchema(`{"type":"object","required":["owner","repo","pr_number"],"properties":{"owner":{"type":"string"},"repo":{"type":"string"},"pr_number":{"type":"integer"}}}`),
+			},
+		},
 	},
 	// URI: agent://medcenter.org/healthcare/agent_patient-intake
 	{
@@ -238,6 +313,11 @@ var agents = []seedAgent{
 		Tags:             []string{"healthcare", "intake", "hipaa", "ehr"},
 		SupportURL:       "https://medcenter.org/support",
 		CreatedAt:        daysAgo(30),
+		Skills: []agentcard.A2ASkill{
+			{ID: "patient-history", Name: "Patient History Collection", Description: "Gather structured medical history via conversational intake", Tags: []string{"ehr", "clinical"}},
+			{ID: "insurance-verification", Name: "Insurance Verification", Description: "Verify patient insurance eligibility in real time", Tags: []string{"insurance", "hipaa"}},
+		},
+		// No MCP tools — auto-derived skills only; this agent uses a custom webhook model.
 	},
 	// URI: agent://legalops.ai/legal/agent_contract-analyzer
 	{
@@ -255,6 +335,22 @@ var agents = []seedAgent{
 		Tags:             []string{"legal", "contracts", "nda", "clause-extraction"},
 		SupportURL:       "https://legalops.ai/docs",
 		CreatedAt:        daysAgo(15),
+		Skills: []agentcard.A2ASkill{
+			{ID: "clause-extraction", Name: "Clause Extraction", Description: "Extract and categorise key clauses from contract documents", Tags: []string{"legal", "nlp"}},
+			{ID: "risk-flagging", Name: "Risk Flagging", Description: "Identify non-standard or high-risk terms against a reference template", Tags: []string{"legal", "risk"}},
+		},
+		MCPTools: []mcpmanifest.MCPTool{
+			{
+				Name:        "analyze_contract",
+				Description: "Extract clauses and flag risks from a contract document",
+				InputSchema: rawSchema(`{"type":"object","required":["document_url"],"properties":{"document_url":{"type":"string","format":"uri"},"contract_type":{"type":"string","enum":["nda","saas","employment","vendor"]}}}`),
+			},
+			{
+				Name:        "compare_to_template",
+				Description: "Compare a contract to a standard template and return diffs",
+				InputSchema: rawSchema(`{"type":"object","required":["document_url","template_id"],"properties":{"document_url":{"type":"string","format":"uri"},"template_id":{"type":"string"}}}`),
+			},
+		},
 	},
 
 	// ── Basic (nap_hosted + active) ───────────────────────────────────────────
@@ -274,6 +370,22 @@ var agents = []seedAgent{
 		Version:          "1.0.0",
 		Tags:             []string{"research", "academia", "summarization"},
 		CreatedAt:        daysAgo(10),
+		Skills: []agentcard.A2ASkill{
+			{ID: "literature-search", Name: "Literature Search", Description: "Search Semantic Scholar, arXiv, and PubMed for papers by topic", Tags: []string{"academia", "search"}},
+			{ID: "literature-review", Name: "Literature Review", Description: "Generate a structured literature review from a set of papers", Tags: []string{"writing", "research"}},
+		},
+		MCPTools: []mcpmanifest.MCPTool{
+			{
+				Name:        "search_papers",
+				Description: "Search academic databases for papers matching the given topic",
+				InputSchema: rawSchema(`{"type":"object","required":["query"],"properties":{"query":{"type":"string"},"max_results":{"type":"integer","default":10},"source":{"type":"string","enum":["arxiv","pubmed","semantic_scholar","all"],"default":"all"}}}`),
+			},
+			{
+				Name:        "generate_review",
+				Description: "Generate a structured literature review from a list of paper IDs",
+				InputSchema: rawSchema(`{"type":"object","required":["paper_ids"],"properties":{"paper_ids":{"type":"array","items":{"type":"string"}},"style":{"type":"string","enum":["narrative","systematic"],"default":"narrative"}}}`),
+			},
+		},
 	},
 	// URI: agent://nap/communication/agent_meeting-summariser
 	{
@@ -291,6 +403,22 @@ var agents = []seedAgent{
 		Version:          "1.1.0",
 		Tags:             []string{"meetings", "transcription", "slack", "action-items"},
 		CreatedAt:        daysAgo(7),
+		Skills: []agentcard.A2ASkill{
+			{ID: "transcription", Name: "Meeting Transcription", Description: "Transcribe audio/video meeting recordings to text", Tags: []string{"audio", "transcription"}},
+			{ID: "action-items", Name: "Action Item Extraction", Description: "Extract and assign action items from a meeting transcript", Tags: []string{"productivity", "meetings"}},
+		},
+		MCPTools: []mcpmanifest.MCPTool{
+			{
+				Name:        "transcribe_meeting",
+				Description: "Transcribe a meeting recording from a URL",
+				InputSchema: rawSchema(`{"type":"object","required":["recording_url"],"properties":{"recording_url":{"type":"string","format":"uri"},"language":{"type":"string","default":"en"}}}`),
+			},
+			{
+				Name:        "extract_action_items",
+				Description: "Extract action items from a meeting transcript",
+				InputSchema: rawSchema(`{"type":"object","required":["transcript"],"properties":{"transcript":{"type":"string"},"format":{"type":"string","enum":["markdown","json"],"default":"markdown"}}}`),
+			},
+		},
 	},
 	// URI: agent://nap/data/agent_data-analyst
 	{
@@ -308,6 +436,23 @@ var agents = []seedAgent{
 		Version:          "0.9.0",
 		Tags:             []string{"sql", "analytics", "visualization", "statistics"},
 		CreatedAt:        daysAgo(5),
+		Skills: []agentcard.A2ASkill{
+			{ID: "sql-analysis", Name: "SQL Analysis", Description: "Execute SQL queries against connected databases and explain results", Tags: []string{"sql", "database"}},
+			{ID: "chart-generation", Name: "Chart Generation", Description: "Produce Vega-Lite or Chart.js visualisation specs from query results", Tags: []string{"visualization", "charts"}},
+			{ID: "trend-explanation", Name: "Trend Explanation", Description: "Summarise statistical trends in plain English from tabular data", Tags: []string{"statistics", "nlp"}},
+		},
+		MCPTools: []mcpmanifest.MCPTool{
+			{
+				Name:        "run_query",
+				Description: "Execute a SQL query on the connected database and return results",
+				InputSchema: rawSchema(`{"type":"object","required":["query"],"properties":{"query":{"type":"string","description":"Read-only SQL SELECT statement"},"limit":{"type":"integer","default":100,"maximum":1000}}}`),
+			},
+			{
+				Name:        "generate_chart_spec",
+				Description: "Generate a Vega-Lite chart spec from tabular query results",
+				InputSchema: rawSchema(`{"type":"object","required":["data","chart_type"],"properties":{"data":{"type":"array","items":{"type":"object"}},"chart_type":{"type":"string","enum":["bar","line","scatter","pie","histogram"]},"x_field":{"type":"string"},"y_field":{"type":"string"}}}`),
+			},
+		},
 	},
 
 	// ── Unverified (pending) ──────────────────────────────────────────────────
@@ -325,6 +470,7 @@ var agents = []seedAgent{
 		RegistrationType: "domain",
 		Tags:             []string{"debugging", "monitoring", "stack-traces"},
 		CreatedAt:        daysAgo(2),
+		// No skills/tools declared yet — pending agents would auto-derive from capability.
 	},
 	// URI: agent://nap/communication/agent_content-writer
 	{
@@ -341,6 +487,11 @@ var agents = []seedAgent{
 		RegistrationType: "nap_hosted",
 		Tags:             []string{"content", "copywriting", "blog", "email"},
 		CreatedAt:        daysAgo(1),
+		Skills: []agentcard.A2ASkill{
+			{ID: "blog-writing", Name: "Blog Writing", Description: "Draft long-form blog posts from a topic brief", Tags: []string{"content", "blog"}},
+			{ID: "social-copy", Name: "Social Copy", Description: "Generate platform-optimised social media copy", Tags: []string{"social", "copywriting"}},
+		},
+		// No MCP tools yet — pending registration.
 	},
 }
 
@@ -356,10 +507,10 @@ func seedAgents(ctx context.Context, db *pgxpool.Pool) error {
 		) VALUES (
 			$1, $2, $3, $4,
 			$5, $6, $7, $8,
-			$9, $10, '{}',
-			$11, $12, $13,
-			$14, $14,
-			$15, $16
+			$9, $10, $11,
+			$12, $13, $14,
+			$15, $15,
+			$16, $17
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			trust_root        = EXCLUDED.trust_root,
@@ -371,6 +522,7 @@ func seedAgents(ctx context.Context, db *pgxpool.Pool) error {
 			owner_domain      = EXCLUDED.owner_domain,
 			status            = EXCLUDED.status,
 			cert_serial       = EXCLUDED.cert_serial,
+			metadata          = EXCLUDED.metadata,
 			version           = EXCLUDED.version,
 			tags              = EXCLUDED.tags,
 			support_url       = EXCLUDED.support_url,
@@ -387,6 +539,18 @@ func seedAgents(ctx context.Context, db *pgxpool.Pool) error {
 		uri := "agent://" + a.TrustRoot + "/" + topLevel + "/" + a.AgentID
 		tier := computeTier(a)
 
+		// Build metadata JSONB — mirrors what service.Register() stores at runtime.
+		meta := map[string]string{}
+		if len(a.Skills) > 0 {
+			b, _ := json.Marshal(a.Skills)
+			meta["_skills"] = string(b)
+		}
+		if len(a.MCPTools) > 0 {
+			b, _ := json.Marshal(a.MCPTools)
+			meta["_mcp_tools"] = string(b)
+		}
+		metaJSON, _ := json.Marshal(meta)
+
 		ownerDomain := a.OwnerDomain
 		certSerial := a.CertSerial
 		version := a.Version
@@ -395,14 +559,18 @@ func seedAgents(ctx context.Context, db *pgxpool.Pool) error {
 		if _, err := db.Exec(ctx, q,
 			a.ID, a.TrustRoot, a.CapabilityNode, a.AgentID,
 			a.DisplayName, a.Description, a.Endpoint, ownerDomain,
-			a.Status, certSerial,
+			a.Status, certSerial, string(metaJSON),
 			version, a.Tags, supportURL,
 			a.CreatedAt,
 			a.OwnerUserID, a.RegistrationType,
 		); err != nil {
 			return fmt.Errorf("upsert agent %s: %w", uri, err)
 		}
-		fmt.Printf("  agent %-12s  %-52s  %s\n", tier, uri, a.DisplayName)
+
+		skillCount := len(a.Skills)
+		toolCount := len(a.MCPTools)
+		fmt.Printf("  agent %-12s  %-52s  %-28s  skills:%d  mcp-tools:%d\n",
+			tier, uri, a.DisplayName, skillCount, toolCount)
 	}
 	return nil
 }

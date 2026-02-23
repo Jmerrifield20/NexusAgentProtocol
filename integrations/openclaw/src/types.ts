@@ -127,6 +127,8 @@ export interface NAPActivateResponse {
   status: string;
   agent_card_json?: string;
   agent_card_note?: string;
+  mcp_manifest_json?: string;
+  mcp_manifest_note?: string;
   task_token?: string;
   certificate?: { serial: string; pem: string };
   private_key_pem?: string;

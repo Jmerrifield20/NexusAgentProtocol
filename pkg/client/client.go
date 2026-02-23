@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/agentcard"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/mcpmanifest"
 	"github.com/jmerrifield20/NexusAgentProtocol/pkg/uri"
 )
 
@@ -60,10 +62,11 @@ type AgentResult struct {
 
 // ActivateResult holds the cert bundle returned by ActivateAgent.
 type ActivateResult struct {
-	URI           string `json:"uri"`
-	CertPEM       string `json:"cert_pem"`
-	PrivateKeyPEM string `json:"private_key_pem"`
-	CAPEM         string `json:"ca_pem"`
+	URI             string `json:"uri"`
+	CertPEM         string `json:"cert_pem"`
+	PrivateKeyPEM   string `json:"private_key_pem"`
+	CAPEM           string `json:"ca_pem"`
+	MCPManifestJSON string `json:"mcp_manifest_json,omitempty"`
 }
 
 // AgentDetail holds the full agent record returned by GET /api/v1/agents/:id.
@@ -539,19 +542,25 @@ func (c *Client) RegisterAgent(ctx context.Context, reg RegisterAgentRequest) (*
 		return nil, err
 	}
 
-	// Registry returns the full agent model; extract the fields we need.
-	var agent struct {
-		ID             string `json:"id"`
-		TrustRoot      string `json:"trust_root"`
-		CapabilityNode string `json:"capability_node"`
-		AgentID        string `json:"agent_id"`
+	// Registry returns {"agent": {...}, "agent_uri": "..."}.
+	var resp struct {
+		Agent struct {
+			ID             string `json:"id"`
+			TrustRoot      string `json:"trust_root"`
+			CapabilityNode string `json:"capability_node"`
+			AgentID        string `json:"agent_id"`
+		} `json:"agent"`
+		AgentURI string `json:"agent_uri"`
 	}
-	if err := json.Unmarshal(body, &agent); err != nil {
+	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("decode agent response: %w", err)
 	}
 
-	agentURI := "agent://" + agent.TrustRoot + "/" + agent.CapabilityNode + "/" + agent.AgentID
-	return &AgentResult{ID: agent.ID, URI: agentURI}, nil
+	agentURI := resp.AgentURI
+	if agentURI == "" {
+		agentURI = "agent://" + resp.Agent.TrustRoot + "/" + resp.Agent.CapabilityNode + "/" + resp.Agent.AgentID
+	}
+	return &AgentResult{ID: resp.Agent.ID, URI: agentURI}, nil
 }
 
 // ActivateAgent posts to /api/v1/agents/:id/activate and returns the cert bundle.
@@ -578,8 +587,9 @@ func (c *Client) ActivateAgent(ctx context.Context, agentID string) (*ActivateRe
 		Certificate struct {
 			PEM string `json:"pem"`
 		} `json:"certificate"`
-		PrivateKeyPEM string `json:"private_key_pem"`
-		CAPEM         string `json:"ca_pem"`
+		PrivateKeyPEM   string `json:"private_key_pem"`
+		CAPEM           string `json:"ca_pem"`
+		MCPManifestJSON string `json:"mcp_manifest_json"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("decode activate response: %w", err)
@@ -587,11 +597,57 @@ func (c *Client) ActivateAgent(ctx context.Context, agentID string) (*ActivateRe
 
 	agentURI := "agent://" + resp.Agent.TrustRoot + "/" + resp.Agent.CapabilityNode + "/" + resp.Agent.AgentID
 	return &ActivateResult{
-		URI:           agentURI,
-		CertPEM:       resp.Certificate.PEM,
-		PrivateKeyPEM: resp.PrivateKeyPEM,
-		CAPEM:         resp.CAPEM,
+		URI:             agentURI,
+		CertPEM:         resp.Certificate.PEM,
+		PrivateKeyPEM:   resp.PrivateKeyPEM,
+		CAPEM:           resp.CAPEM,
+		MCPManifestJSON: resp.MCPManifestJSON,
 	}, nil
+}
+
+// GetAgentCard fetches the A2A-spec agent card for the agent with the given UUID.
+// The card is served at GET /api/v1/agents/:id/agent.json.
+func (c *Client) GetAgentCard(ctx context.Context, id string) (*agentcard.A2ACard, error) {
+	url := c.registryBase + "/api/v1/agents/" + id + "/agent.json"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	var card agentcard.A2ACard
+	if err := json.Unmarshal(body, &card); err != nil {
+		return nil, fmt.Errorf("decode agent card: %w", err)
+	}
+	return &card, nil
+}
+
+// GetMCPManifest fetches the MCP manifest for the agent with the given UUID.
+// The manifest is served at GET /api/v1/agents/:id/mcp-manifest.json.
+// Returns an error if the agent has no declared MCP tools.
+func (c *Client) GetMCPManifest(ctx context.Context, id string) (*mcpmanifest.MCPManifest, error) {
+	url := c.registryBase + "/api/v1/agents/" + id + "/mcp-manifest.json"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	var manifest mcpmanifest.MCPManifest
+	if err := json.Unmarshal(body, &manifest); err != nil {
+		return nil, fmt.Errorf("decode MCP manifest: %w", err)
+	}
+	return &manifest, nil
 }
 
 // GetAgent fetches a single agent record by its UUID from GET /api/v1/agents/:id.

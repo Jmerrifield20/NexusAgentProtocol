@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -8,7 +9,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -166,6 +169,42 @@ func decodeCertAndKey(certPEM, keyPEM []byte) (*x509.Certificate, *rsa.PrivateKe
 		return nil, nil, fmt.Errorf("parse private key: %w", err)
 	}
 	return cert, key, nil
+}
+
+// LoadCertAndKey parses PEM-encoded cert + RSA key bytes.
+// Exposes the internal decodeCertAndKey for use by main.go federated startup.
+func LoadCertAndKey(certPEM, keyPEM []byte) (*x509.Certificate, *rsa.PrivateKey, error) {
+	return decodeCertAndKey(certPEM, keyPEM)
+}
+
+// FetchRootCAPool downloads a CA cert PEM from a URL and returns a CertPool.
+// Used in federated mode to anchor trust in the NAP root CA.
+func FetchRootCAPool(ctx context.Context, caURL string, timeout time.Duration) (*x509.CertPool, error) {
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+	client := &http.Client{Timeout: timeout}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, caURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build CA fetch request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch root CA from %s: %w", caURL, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch root CA: unexpected status %d from %s", resp.StatusCode, caURL)
+	}
+	pemBytes, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MB max
+	if err != nil {
+		return nil, fmt.Errorf("read root CA body: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		return nil, fmt.Errorf("no valid certificates found in root CA response from %s", caURL)
+	}
+	return pool, nil
 }
 
 // randomSerial generates a cryptographically random 128-bit certificate serial.

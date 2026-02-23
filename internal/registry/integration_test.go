@@ -183,8 +183,10 @@ func TestFullLifecycle(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("register: expected 201, got %d: %v", resp.StatusCode, body)
 	}
-	id := body["id"].(string)
-	agentID := body["agent_id"].(string)
+	// Register response shape: {"agent": {...}, "agent_uri": "..."}
+	agentBody := body["agent"].(map[string]any)
+	id := agentBody["id"].(string)
+	agentID := agentBody["agent_id"].(string)
 
 	// Get
 	resp, body = getJSON(t, srv, "/api/v1/agents/"+id)
@@ -280,7 +282,7 @@ func TestTrustLedger_entries(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("register: %d", resp.StatusCode)
 	}
-	id := body["id"].(string)
+	id := body["agent"].(map[string]any)["id"].(string)
 	postJSON(t, srv, "/api/v1/agents/"+id+"/activate", nil)
 
 	resp, body = getJSON(t, srv, "/api/v1/ledger")
@@ -375,7 +377,8 @@ func TestNAPHosted_RegisterAndListMyAgents(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("register hosted: expected 201, got %d: %v", resp.StatusCode, body)
 	}
-	agentID := body["id"].(string)
+	// Register response shape: {"agent": {...}, "agent_uri": "..."}
+	agentID := body["agent"].(map[string]any)["id"].(string)
 	uri, _ := body["agent_uri"].(string)
 	if uri == "" {
 		t.Error("register hosted: expected non-empty agent_uri")

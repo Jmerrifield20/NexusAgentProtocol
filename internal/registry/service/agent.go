@@ -12,8 +12,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/identity"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/model"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/threat"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/trustledger"
 	"github.com/jmerrifield20/NexusAgentProtocol/pkg/agentcard"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/mcpmanifest"
 	"go.uber.org/zap"
 )
 
@@ -45,6 +47,10 @@ type ActivationResult struct {
 	// agent's own domain for A2A client discovery.
 	// Non-empty only when a TokenIssuer is configured on the service.
 	AgentCardJSON string
+
+	// MCPManifestJSON is the MCP server manifest for this agent serialised as JSON.
+	// Non-empty when the agent declared MCPTools at registration time.
+	MCPManifestJSON string
 }
 
 // FreeTierConfig holds configuration for the NAP-hosted free tier.
@@ -84,17 +90,25 @@ type UserEmailChecker interface {
 	IsEmailVerified(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
+// RemoteResolver resolves agents that are not found in the local registry by
+// querying federated peer registries. *federation.RemoteResolver satisfies this.
+type RemoteResolver interface {
+	Resolve(ctx context.Context, trustRoot, capNode, agentID string) (*model.Agent, error)
+}
+
 // AgentService contains business logic for agent lifecycle management.
 type AgentService struct {
-	repo         agentRepo
-	issuer       *identity.Issuer      // nil = no cert issuance
-	tokens       *identity.TokenIssuer // nil = no endorsement JWT generation
-	ledger       trustledger.Ledger    // nil = no ledger writes
-	dnsVerifier  DomainVerifier        // nil = skip domain verification gate
-	emailChecker UserEmailChecker      // nil = skip email verification gate
-	freeTier     FreeTierConfig
-	registryURL  string // base URL of this registry, used in endorsement JWTs
-	logger       *zap.Logger
+	repo           agentRepo
+	issuer         *identity.Issuer      // nil = no cert issuance
+	tokens         *identity.TokenIssuer // nil = no endorsement JWT generation
+	ledger         trustledger.Ledger    // nil = no ledger writes
+	dnsVerifier    DomainVerifier        // nil = skip domain verification gate
+	emailChecker   UserEmailChecker      // nil = skip email verification gate
+	threatScorer   threat.Scorer         // nil = no threat scoring
+	remoteResolver RemoteResolver        // nil = no cross-registry resolution
+	freeTier       FreeTierConfig
+	registryURL    string // base URL of this registry, used in endorsement JWTs
+	logger         *zap.Logger
 }
 
 // NewAgentService creates a new AgentService.
@@ -115,6 +129,12 @@ func (s *AgentService) SetEmailChecker(ec UserEmailChecker) {
 	s.emailChecker = ec
 }
 
+// SetThreatScorer configures the threat scorer used at registration time.
+// When set, Register() runs the scorer and rejects registrations with score ≥ 85.
+func (s *AgentService) SetThreatScorer(sc threat.Scorer) {
+	s.threatScorer = sc
+}
+
 // SetFreeTierConfig replaces the free-tier quota/trust-root configuration.
 func (s *AgentService) SetFreeTierConfig(cfg FreeTierConfig) {
 	s.freeTier = cfg
@@ -129,6 +149,27 @@ func (s *AgentService) SetTokenIssuer(t *identity.TokenIssuer) {
 // SetRegistryURL sets the base URL of this registry for use in endorsement JWTs.
 func (s *AgentService) SetRegistryURL(url string) {
 	s.registryURL = url
+}
+
+// SetRemoteResolver configures the cross-registry resolver used when a local
+// agent lookup fails. Set to nil to disable federated resolution.
+func (s *AgentService) SetRemoteResolver(rr RemoteResolver) {
+	s.remoteResolver = rr
+}
+
+// ScoreThreat runs the threat scorer against a registration request without
+// performing any registration. Returns nil when no scorer is configured.
+func (s *AgentService) ScoreThreat(ctx context.Context, req *model.RegisterRequest) (*threat.Report, error) {
+	if s.threatScorer == nil {
+		return nil, nil
+	}
+	var caps []string
+	for _, c := range []string{req.Capability, req.Category, req.CapabilityNode} {
+		if c != "" {
+			caps = append(caps, c)
+		}
+	}
+	return s.threatScorer.Score(ctx, req.DisplayName, req.Description, req.Endpoint, caps)
 }
 
 // appendLedger appends an audit entry to the ledger in a non-fatal manner.
@@ -247,6 +288,26 @@ func (s *AgentService) Register(ctx context.Context, req *model.RegisterRequest)
 		}
 	}
 
+	// Persist declared A2A skills into metadata so they survive the round-trip.
+	if len(req.Skills) > 0 {
+		if agent.Metadata == nil {
+			agent.Metadata = make(model.AgentMeta)
+		}
+		if b, err := json.Marshal(req.Skills); err == nil {
+			agent.Metadata["_skills"] = string(b)
+		}
+	}
+
+	// Persist declared MCP tools into metadata.
+	if len(req.MCPTools) > 0 {
+		if agent.Metadata == nil {
+			agent.Metadata = make(model.AgentMeta)
+		}
+		if b, err := json.Marshal(req.MCPTools); err == nil {
+			agent.Metadata["_mcp_tools"] = string(b)
+		}
+	}
+
 	if err := s.repo.Create(ctx, agent); err != nil {
 		s.logger.Error("failed to create agent", zap.Error(err))
 		return nil, fmt.Errorf("create agent: %w", err)
@@ -283,9 +344,16 @@ func (s *AgentService) Get(ctx context.Context, id uuid.UUID) (*model.Agent, err
 // capNode is the top-level category from the URI (e.g. "finance").
 // The repository does prefix matching so agents stored as "finance>accounting>..."
 // are correctly found.
+// When a local miss occurs and a RemoteResolver is configured, resolution is
+// attempted on federated peer registries (non-fatal on remote error).
 func (s *AgentService) Resolve(ctx context.Context, trustRoot, capNode, agentID string) (*model.Agent, error) {
 	agent, err := s.repo.GetByAgentID(ctx, trustRoot, normalizeCapability(capNode), agentID)
 	if err != nil {
+		if s.remoteResolver != nil {
+			if remote, remoteErr := s.remoteResolver.Resolve(ctx, trustRoot, capNode, agentID); remoteErr == nil {
+				return remote, nil
+			}
+		}
 		return nil, err
 	}
 	if agent.Status != model.AgentStatusActive {
@@ -425,6 +493,15 @@ func (s *AgentService) Activate(ctx context.Context, id uuid.UUID) (*ActivationR
 		result.AgentCardJSON = cardJSON
 	}
 
+	// Generate MCP manifest (non-fatal).
+	if manifest, err := s.GenerateMCPManifest(agent); err != nil {
+		s.logger.Warn("generate MCP manifest (non-fatal)", zap.Error(err))
+	} else if manifest != nil {
+		if b, err := json.MarshalIndent(manifest, "", "  "); err == nil {
+			result.MCPManifestJSON = string(b)
+		}
+	}
+
 	s.appendLedger(ctx, agent.URI(), "activate", "nexus-system", map[string]string{
 		"agent_id":    agent.AgentID,
 		"cert_serial": result.Serial,
@@ -530,15 +607,16 @@ func (s *AgentService) generateAgentCard(agent *model.Agent, certSerial string) 
 	}
 
 	card := agentcard.A2ACard{
-		Name:         agent.DisplayName,
-		Description:  agent.Description,
-		URL:          agent.Endpoint,
-		Version:      "1.0",
-		Capabilities: agentcard.A2ACapabilities{},
-		NAPURI:       agent.URI(),
-		NAPTrustTier: string(tier),
-		NAPRegistry:  registry,
-		NAPCertSerial: certSerial,
+		Name:           agent.DisplayName,
+		Description:    agent.Description,
+		URL:            agent.Endpoint,
+		Version:        "1.0",
+		Capabilities:   agentcard.A2ACapabilities{},
+		Skills:         buildSkills(agent),
+		NAPURI:         agent.URI(),
+		NAPTrustTier:   string(tier),
+		NAPRegistry:    registry,
+		NAPCertSerial:  certSerial,
 		NAPEndorsement: endorsement,
 	}
 
@@ -547,4 +625,103 @@ func (s *AgentService) generateAgentCard(agent *model.Agent, certSerial string) 
 		return "", fmt.Errorf("marshal agent card: %w", err)
 	}
 	return string(data), nil
+}
+
+// GetAgentCardJSON returns the A2A-spec agent card for an existing agent as JSON.
+// When a TokenIssuer is configured, the card includes a signed NAP endorsement.
+// When no TokenIssuer is configured, the card is returned without an endorsement.
+func (s *AgentService) GetAgentCardJSON(agent *model.Agent) (string, error) {
+	cardJSON, err := s.generateAgentCard(agent, agent.CertSerial)
+	if err != nil {
+		return "", err
+	}
+	if cardJSON != "" {
+		return cardJSON, nil
+	}
+
+	// No token issuer — return card without endorsement.
+	registry := s.registryURL
+	if registry == "" {
+		registry = "https://registry.nexusagentprotocol.com"
+	}
+	tier := agent.ComputeTrustTier()
+	card := agentcard.A2ACard{
+		Name:         agent.DisplayName,
+		Description:  agent.Description,
+		URL:          agent.Endpoint,
+		Version:      "1.0",
+		Capabilities: agentcard.A2ACapabilities{},
+		Skills:       buildSkills(agent),
+		NAPURI:       agent.URI(),
+		NAPTrustTier: string(tier),
+		NAPRegistry:  registry,
+	}
+	data, err := json.MarshalIndent(card, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal agent card: %w", err)
+	}
+	return string(data), nil
+}
+
+// buildSkills returns the A2A skills for an agent. It checks metadata first
+// (skills declared at registration) and falls back to capability-derived skills.
+func buildSkills(agent *model.Agent) []agentcard.A2ASkill {
+	// Check if skills were declared at registration and stored in metadata.
+	if skillsJSON, ok := agent.Metadata["_skills"]; ok && skillsJSON != "" {
+		var skills []agentcard.A2ASkill
+		if err := json.Unmarshal([]byte(skillsJSON), &skills); err == nil && len(skills) > 0 {
+			return skills
+		}
+	}
+
+	// Auto-derive a skill from the capability node.
+	if agent.CapabilityNode == "" {
+		return nil
+	}
+	return []agentcard.A2ASkill{{
+		ID:          strings.ReplaceAll(agent.CapabilityNode, ">", "-"),
+		Name:        model.FormatDisplay(agent.CapabilityNode),
+		Description: agent.Description,
+		Tags:        []string{model.TopLevelCategory(agent.CapabilityNode)},
+	}}
+}
+
+// GenerateMCPManifest assembles an MCP manifest for the given agent.
+// Returns nil when the agent has no declared MCP tools.
+func (s *AgentService) GenerateMCPManifest(agent *model.Agent) (*mcpmanifest.MCPManifest, error) {
+	toolsJSON, ok := agent.Metadata["_mcp_tools"]
+	if !ok || toolsJSON == "" {
+		return nil, nil
+	}
+
+	var tools []mcpmanifest.MCPTool
+	if err := json.Unmarshal([]byte(toolsJSON), &tools); err != nil {
+		return nil, fmt.Errorf("decode mcp tools: %w", err)
+	}
+	if len(tools) == 0 {
+		return nil, nil
+	}
+
+	registry := s.registryURL
+	if registry == "" {
+		registry = "https://registry.nexusagentprotocol.com"
+	}
+
+	version := agent.Version
+	if version == "" {
+		version = "1.0"
+	}
+
+	tier := agent.ComputeTrustTier()
+
+	return &mcpmanifest.MCPManifest{
+		SchemaVersion: "2024-11-05",
+		Name:          agent.DisplayName,
+		Version:       version,
+		Description:   agent.Description,
+		Tools:         tools,
+		NAPURI:        agent.URI(),
+		NAPTrustTier:  string(tier),
+		NAPRegistry:   registry,
+	}, nil
 }

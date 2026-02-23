@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/agentcard"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/mcpmanifest"
 )
 
 // AgentStatus represents the lifecycle state of a registered agent.
@@ -152,6 +154,15 @@ type RegisterRequest struct {
 	RegistrationType string     `json:"registration_type"`
 	// Username is set by the handler from the user JWT; not from the client body.
 	Username string `json:"-"`
+
+	// Skills is an optional set of A2A skill descriptors. When provided, they
+	// are stored in agent metadata and used to populate the A2A agent card.
+	// If omitted, skills are auto-derived from the capability taxonomy.
+	Skills []agentcard.A2ASkill `json:"skills,omitempty"`
+
+	// MCPTools declares the MCP tool definitions this agent exposes.
+	// Stored in agent metadata and served at /api/v1/agents/:id/mcp-manifest.json.
+	MCPTools []mcpmanifest.MCPTool `json:"mcp_tools,omitempty"`
 }
 
 // UpdateRequest is the payload for updating an existing agent registration.
