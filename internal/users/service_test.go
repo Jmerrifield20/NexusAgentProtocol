@@ -158,6 +158,17 @@ func (r *stubUserRepo) SetPasswordHash(_ context.Context, userID uuid.UUID, hash
 	return nil
 }
 
+func (r *stubUserRepo) UpdateProfile(_ context.Context, userID uuid.UUID, bio, avatarURL, websiteURL string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if u, ok := r.byID[userID]; ok {
+		u.Bio = bio
+		u.AvatarURL = avatarURL
+		u.WebsiteURL = websiteURL
+	}
+	return nil
+}
+
 func (r *stubUserRepo) CreatePasswordResetToken(_ context.Context, userID uuid.UUID, token string, expires time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

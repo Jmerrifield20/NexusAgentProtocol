@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -12,16 +13,27 @@ import (
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/model"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/repository"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/service"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/users"
 	"go.uber.org/zap"
 )
 
+// userLookup is the interface used by AgentHandler to look up agent owners.
+type userLookup interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*users.User, error)
+}
 
 // AgentHandler handles HTTP requests for the agent registry.
 type AgentHandler struct {
 	svc        *service.AgentService
 	tokens     *identity.TokenIssuer     // nil = no agent token auth enforcement
 	userTokens *identity.UserTokenIssuer // nil = no user token support
+	ownerSvc   userLookup               // nil = no owner attribution
 	logger     *zap.Logger
+}
+
+// SetUserLookup configures the user lookup service used to attach owner info to GetAgent responses.
+func (h *AgentHandler) SetUserLookup(ul userLookup) {
+	h.ownerSvc = ul
 }
 
 // NewAgentHandler creates a new AgentHandler.
@@ -175,12 +187,14 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 
 // ListAgents handles GET /agents — returns paginated agent list.
 // Optional ?q= performs an inclusive partial-match search across name, description,
-// org, capability, agent_id, and tags. Without ?q=, returns all agents filtered
-// by the optional trust_root and capability_node params.
+// org, capability, agent_id, and tags. ?username= filters by agent owner username.
+// Without ?q= or ?username=, returns all agents filtered by the optional trust_root
+// and capability_node params.
 func (h *AgentHandler) ListAgents(c *gin.Context) {
 	q := strings.TrimSpace(c.Query("q"))
 	trustRoot := c.Query("trust_root")
 	capNode := c.Query("capability_node")
+	username := strings.TrimSpace(c.Query("username"))
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
@@ -194,21 +208,31 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 	var agents []*model.Agent
 	var err error
 
-	if q != "" {
-		agents, err = h.svc.Search(c.Request.Context(), q, limit, offset)
-	} else {
-		agents, err = h.svc.List(c.Request.Context(), trustRoot, capNode, limit, offset)
+	ctx := c.Request.Context()
+
+	switch {
+	case username != "":
+		agents, err = h.svc.ListActiveByUsername(ctx, username, limit, offset)
+	case q != "":
+		agents, err = h.svc.Search(ctx, q, limit, offset)
+	default:
+		agents, err = h.svc.List(ctx, trustRoot, capNode, limit, offset)
 	}
 	if err != nil {
 		h.logger.Error("list agents", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list agents"})
 		return
 	}
+	if agents == nil {
+		agents = []*model.Agent{}
+	}
 
 	c.JSON(http.StatusOK, gin.H{"agents": agents, "count": len(agents)})
 }
 
 // GetAgent handles GET /agents/:id — retrieves a single agent by UUID.
+// Response shape: {"agent": {...}, "owner": {"username": "...", "display_name": "...", "avatar_url": "..."}}
+// The "owner" field is null when the agent has no owner account or owner lookup is unavailable.
 func (h *AgentHandler) GetAgent(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -216,7 +240,9 @@ func (h *AgentHandler) GetAgent(c *gin.Context) {
 		return
 	}
 
-	agent, err := h.svc.Get(c.Request.Context(), id)
+	ctx := c.Request.Context()
+
+	agent, err := h.svc.Get(ctx, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
@@ -226,7 +252,19 @@ func (h *AgentHandler) GetAgent(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, agent)
+	resp := gin.H{"agent": agent}
+
+	if h.ownerSvc != nil && agent.OwnerUserID != nil {
+		if owner, err := h.ownerSvc.GetByID(ctx, *agent.OwnerUserID); err == nil {
+			resp["owner"] = gin.H{
+				"username":     owner.Username,
+				"display_name": owner.DisplayName,
+				"avatar_url":   owner.AvatarURL,
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // UpdateAgent handles PATCH /agents/:id — updates mutable agent fields.

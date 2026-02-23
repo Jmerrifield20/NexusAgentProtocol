@@ -216,7 +216,17 @@ func (r *UserRepository) SetPasswordHash(ctx context.Context, userID uuid.UUID, 
 	return err
 }
 
+// UpdateProfile updates the bio, avatar_url, and website_url for a user.
+func (r *UserRepository) UpdateProfile(ctx context.Context, userID uuid.UUID, bio, avatarURL, websiteURL string) error {
+	q := `UPDATE users SET bio = $2, avatar_url = $3, website_url = $4, updated_at = $5 WHERE id = $1`
+	_, err := r.db.Exec(ctx, q, userID, bio, avatarURL, websiteURL, time.Now().UTC())
+	return err
+}
+
 // scanOne executes a single-row query and scans the result into a User.
+// Column order: id, email, password_hash, display_name, username, email_verified,
+// created_at, updated_at, bio, avatar_url, website_url, public_profile
+// (matches the schema definition order; migration 008 appended the last four).
 func (r *UserRepository) scanOne(ctx context.Context, q string, args ...any) (*User, error) {
 	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
@@ -235,6 +245,7 @@ func (r *UserRepository) scanOne(ctx context.Context, q string, args ...any) (*U
 	if err := rows.Scan(
 		&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Username,
 		&u.EmailVerified, &u.CreatedAt, &u.UpdatedAt,
+		&u.Bio, &u.AvatarURL, &u.WebsiteURL, &u.PublicProfile,
 	); err != nil {
 		return nil, fmt.Errorf("scan user: %w", err)
 	}

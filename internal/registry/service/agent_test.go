@@ -235,6 +235,39 @@ func (s *stubAgentRepo) CountByOwner(_ context.Context, ownerUserID uuid.UUID) (
 	return count, nil
 }
 
+func (s *stubAgentRepo) ListActiveByOwnerUserID(_ context.Context, ownerUserID uuid.UUID, limit, offset int) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if a.OwnerUserID != nil && *a.OwnerUserID == ownerUserID && a.Status == model.AgentStatusActive {
+			cp := *a
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (s *stubAgentRepo) ListActiveByUsername(_ context.Context, username string, limit, offset int) ([]*model.Agent, error) {
+	return nil, nil
+}
+
+func (s *stubAgentRepo) CountActiveByOwnerUserID(_ context.Context, ownerUserID uuid.UUID) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, a := range s.rows {
+		if a.OwnerUserID != nil && *a.OwnerUserID == ownerUserID && a.Status == model.AgentStatusActive {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (s *stubAgentRepo) ListVerifiedDomainsByUserID(_ context.Context, ownerUserID uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 func newTestAgentService(repo *stubAgentRepo, issuer *identity.Issuer, ledger trustledger.Ledger, verifier service.DomainVerifier) *service.AgentService {

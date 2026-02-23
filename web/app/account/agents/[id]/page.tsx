@@ -108,9 +108,10 @@ export default function AgentDetailPage() {
     ]);
     if (resp.status === 404) { setNotFound(true); setLoading(false); return; }
     if (!resp.ok) { setLoading(false); return; }
-    const data = await resp.json() as Agent;
-    setAgent(data);
-    setForm(formFromAgent(data));
+    const data = await resp.json() as { agent: Agent; owner?: unknown };
+    const agentData = data.agent ?? (data as unknown as Agent);
+    setAgent(agentData);
+    setForm(formFromAgent(agentData));
     if (cardResp?.ok) {
       const card = await cardResp.json() as { skills?: A2ASkill[] };
       setSkills(card.skills ?? []);

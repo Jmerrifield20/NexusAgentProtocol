@@ -68,10 +68,14 @@ type agentRepo interface {
 	List(ctx context.Context, trustRoot, capNode string, limit, offset int) ([]*model.Agent, error)
 	ListByOwnerDomain(ctx context.Context, domain string, limit, offset int) ([]*model.Agent, error)
 	ListByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID, limit, offset int) ([]*model.Agent, error)
+	ListActiveByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID, limit, offset int) ([]*model.Agent, error)
+	ListActiveByUsername(ctx context.Context, username string, limit, offset int) ([]*model.Agent, error)
 	SearchByOrg(ctx context.Context, orgName string, limit, offset int) ([]*model.Agent, error)
 	SearchByCapability(ctx context.Context, capability, orgName string, limit, offset int) ([]*model.Agent, error)
 	Search(ctx context.Context, q string, limit, offset int) ([]*model.Agent, error)
 	CountByOwner(ctx context.Context, ownerUserID uuid.UUID) (int, error)
+	CountActiveByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID) (int, error)
+	ListVerifiedDomainsByUserID(ctx context.Context, ownerUserID uuid.UUID) ([]string, error)
 	Update(ctx context.Context, agent *model.Agent) error
 	UpdateStatus(ctx context.Context, id uuid.UUID, status model.AgentStatus) error
 	ActivateWithCert(ctx context.Context, id uuid.UUID, serial, certPEM string) error
@@ -536,6 +540,26 @@ func (s *AgentService) ListByOwnerDomain(ctx context.Context, ownerDomain string
 // ListByOwnerUserID returns all agents owned by the given user account.
 func (s *AgentService) ListByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID, limit, offset int) ([]*model.Agent, error) {
 	return s.repo.ListByOwnerUserID(ctx, ownerUserID, limit, offset)
+}
+
+// ListActiveByOwnerUserID returns active agents owned by the given user account.
+func (s *AgentService) ListActiveByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID, limit, offset int) ([]*model.Agent, error) {
+	return s.repo.ListActiveByOwnerUserID(ctx, ownerUserID, limit, offset)
+}
+
+// ListActiveByUsername returns active agents owned by the user with the given username.
+func (s *AgentService) ListActiveByUsername(ctx context.Context, username string, limit, offset int) ([]*model.Agent, error) {
+	return s.repo.ListActiveByUsername(ctx, username, limit, offset)
+}
+
+// CountActiveByOwnerUserID returns the count of active agents owned by a user.
+func (s *AgentService) CountActiveByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID) (int, error) {
+	return s.repo.CountActiveByOwnerUserID(ctx, ownerUserID)
+}
+
+// ListVerifiedDomainsByUserID returns the distinct verified domain trust_roots for a user.
+func (s *AgentService) ListVerifiedDomainsByUserID(ctx context.Context, ownerUserID uuid.UUID) ([]string, error) {
+	return s.repo.ListVerifiedDomainsByUserID(ctx, ownerUserID)
 }
 
 // LookupByOrg returns all active agents registered under the given org namespace.

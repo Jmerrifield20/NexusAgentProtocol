@@ -264,6 +264,7 @@ func run(logger *zap.Logger) error {
 
 	agentHandler := handler.NewAgentHandler(svc, tokens, logger)
 	agentHandler.SetUserTokenIssuer(userTokens)
+	agentHandler.SetUserLookup(userSvc)
 	identityHandler := handler.NewIdentityHandler(issuer, tokens, logger)
 	ledgerHandler := handler.NewLedgerHandler(ledger, logger)
 	dnsHandler := handler.NewDNSHandler(dnsSvc, logger)
@@ -271,6 +272,8 @@ func run(logger *zap.Logger) error {
 	authHandler := handler.NewAuthHandler(userSvc, userTokens, oauthCfgs, logger)
 	authHandler.SetFrontendURL(viper.GetString("registry.frontend_url"))
 	authHandler.SetAdminSecret(viper.GetString("registry.admin_secret"))
+	userProfileHandler := handler.NewUserHandler(userSvc, svc, logger)
+	userProfileHandler.SetUserTokenIssuer(userTokens)
 
 	// ── HTTP Router ───────────────────────────────────────────────────────────
 	if os.Getenv("GIN_MODE") == "" {
@@ -333,6 +336,7 @@ func run(logger *zap.Logger) error {
 	ledgerHandler.Register(v1)
 	dnsHandler.Register(v1)
 	authHandler.Register(v1)
+	userProfileHandler.Register(v1)
 	if fedHandler != nil {
 		fedHandler.Register(v1)
 	}

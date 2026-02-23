@@ -302,6 +302,91 @@ func (r *AgentRepository) CountByOwner(ctx context.Context, ownerUserID uuid.UUI
 	return count, nil
 }
 
+// ListActiveByOwnerUserID returns active agents owned by a specific user, newest first.
+func (r *AgentRepository) ListActiveByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID, limit, offset int) ([]*model.Agent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := `
+		SELECT * FROM agents
+		WHERE owner_user_id = $1 AND status = 'active'
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3`
+	rows, err := r.db.Query(ctx, query, ownerUserID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var agents []*model.Agent
+	for rows.Next() {
+		a, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
+// ListActiveByUsername returns active agents owned by the user with the given username, newest first.
+func (r *AgentRepository) ListActiveByUsername(ctx context.Context, username string, limit, offset int) ([]*model.Agent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := `
+		SELECT a.* FROM agents a
+		JOIN users u ON u.id = a.owner_user_id
+		WHERE u.username = $1 AND a.status = 'active'
+		ORDER BY a.created_at DESC
+		LIMIT $2 OFFSET $3`
+	rows, err := r.db.Query(ctx, query, username, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var agents []*model.Agent
+	for rows.Next() {
+		a, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
+// CountActiveByOwnerUserID returns the number of active agents owned by a user.
+func (r *AgentRepository) CountActiveByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID) (int, error) {
+	var count int
+	q := `SELECT COUNT(*) FROM agents WHERE owner_user_id = $1 AND status = 'active'`
+	if err := r.db.QueryRow(ctx, q, ownerUserID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count active by owner: %w", err)
+	}
+	return count, nil
+}
+
+// ListVerifiedDomainsByUserID returns the distinct verified trust_roots for a user's domain agents.
+func (r *AgentRepository) ListVerifiedDomainsByUserID(ctx context.Context, ownerUserID uuid.UUID) ([]string, error) {
+	q := `
+		SELECT DISTINCT trust_root FROM agents
+		WHERE owner_user_id = $1 AND registration_type = 'domain' AND status = 'active'
+		ORDER BY trust_root`
+	rows, err := r.db.Query(ctx, q, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var domains []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		domains = append(domains, d)
+	}
+	return domains, rows.Err()
+}
+
 // Update modifies an existing agent record.
 func (r *AgentRepository) Update(ctx context.Context, agent *model.Agent) error {
 	meta, err := json.Marshal(agent.Metadata)

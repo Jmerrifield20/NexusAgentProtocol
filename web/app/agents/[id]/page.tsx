@@ -10,13 +10,24 @@ import { isLoggedIn } from "../../../lib/auth";
 
 const REGISTRY = process.env.NEXT_PUBLIC_REGISTRY_URL ?? "http://localhost:8080";
 
-// ── A2A card types ────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface A2ASkill {
   id:          string;
   name:        string;
   description: string;
   tags?:       string[];
+}
+
+interface AgentOwner {
+  username:     string;
+  display_name: string;
+  avatar_url:   string;
+}
+
+interface AgentResponse {
+  agent: Agent;
+  owner?: AgentOwner;
 }
 
 // ── Badges ────────────────────────────────────────────────────────────────────
@@ -83,6 +94,7 @@ export default function PublicAgentDetailPage() {
   const params = useParams<{ id: string }>();
 
   const [agent, setAgent]     = useState<Agent | null>(null);
+  const [owner, setOwner]     = useState<AgentOwner | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -95,9 +107,14 @@ export default function PublicAgentDetailPage() {
       .then((r) => {
         if (r.status === 404) { setNotFound(true); return null; }
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<Agent>;
+        return r.json() as Promise<AgentResponse>;
       })
-      .then((data) => { if (data) setAgent(data); })
+      .then((data) => {
+        if (data) {
+          setAgent(data.agent);
+          if (data.owner) setOwner(data.owner);
+        }
+      })
       .catch(() => setNotFound(true));
 
     const cardReq = fetch(`${REGISTRY}/api/v1/agents/${params.id}/agent.json`)
@@ -229,6 +246,17 @@ export default function PublicAgentDetailPage() {
         {!isHosted && agent.owner_domain && (
           <DetailRow label="Domain">
             <span className="font-mono text-xs">{agent.owner_domain}</span>
+          </DetailRow>
+        )}
+
+        {owner && (
+          <DetailRow label="Owner">
+            <a
+              href={`/users/${encodeURIComponent(owner.username)}`}
+              className="text-xs text-nexus-500 hover:underline"
+            >
+              by {owner.display_name || owner.username}
+            </a>
           </DetailRow>
         )}
 

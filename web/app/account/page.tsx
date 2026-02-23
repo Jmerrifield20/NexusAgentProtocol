@@ -5,6 +5,14 @@ import { getToken, getUser, clearToken, isLoggedIn, UserClaims } from "../../lib
 import { Agent, agentURI, TIER_STYLES, STATUS_STYLES } from "../../lib/agent";
 import { useRouter } from "next/navigation";
 
+// ── Edit profile state ────────────────────────────────────────────────────────
+
+interface ProfileForm {
+  bio:         string;
+  avatar_url:  string;
+  website_url: string;
+}
+
 const REGISTRY = process.env.NEXT_PUBLIC_REGISTRY_URL ?? "http://localhost:8080";
 
 // ── Badges ───────────────────────────────────────────────────────────────────
@@ -89,6 +97,12 @@ export default function AccountPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState("");
 
+  // Profile edit state
+  const [profileForm, setProfileForm]   = useState<ProfileForm>({ bio: "", avatar_url: "", website_url: "" });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileOk, setProfileOk]       = useState(false);
+  const [profileErr, setProfileErr]     = useState("");
+
   const loadAgents = () => {
     const token = getToken();
     fetch(`${REGISTRY}/api/v1/users/me/agents`, {
@@ -112,6 +126,34 @@ export default function AccountPage() {
   const handleLogout = () => {
     clearToken();
     window.location.href = "/";
+  };
+
+  const handleProfileSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfileSaving(true);
+    setProfileOk(false);
+    setProfileErr("");
+    try {
+      const r = await fetch(`${REGISTRY}/api/v1/users/me/profile`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${getToken()}`,
+        },
+        body: JSON.stringify(profileForm),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({})) as { error?: string };
+        setProfileErr(d.error ?? `HTTP ${r.status}`);
+      } else {
+        setProfileOk(true);
+        setTimeout(() => setProfileOk(false), 3000);
+      }
+    } catch {
+      setProfileErr("Network error");
+    } finally {
+      setProfileSaving(false);
+    }
   };
 
   if (!user) return null;
@@ -163,6 +205,60 @@ export default function AccountPage() {
             <p className="text-xs text-gray-400 mt-0.5">{s.label}</p>
           </div>
         ))}
+      </div>
+
+      {/* Edit Profile */}
+      <div className="rounded-xl border border-gray-200 bg-white p-6 space-y-4">
+        <h2 className="text-base font-semibold text-gray-900">Edit Profile</h2>
+        <form onSubmit={handleProfileSave} className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Bio</label>
+            <textarea
+              rows={2}
+              value={profileForm.bio}
+              onChange={(e) => setProfileForm((f) => ({ ...f, bio: e.target.value }))}
+              placeholder="A short description about yourself"
+              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-nexus-500 focus:outline-none resize-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Avatar URL</label>
+            <input
+              type="url"
+              value={profileForm.avatar_url}
+              onChange={(e) => setProfileForm((f) => ({ ...f, avatar_url: e.target.value }))}
+              placeholder="https://example.com/avatar.png"
+              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-nexus-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Website URL</label>
+            <input
+              type="url"
+              value={profileForm.website_url}
+              onChange={(e) => setProfileForm((f) => ({ ...f, website_url: e.target.value }))}
+              placeholder="https://yourwebsite.com"
+              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-nexus-500 focus:outline-none"
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={profileSaving}
+              className="rounded-lg bg-nexus-500 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-600 disabled:opacity-50 transition-colors"
+            >
+              {profileSaving ? "Saving…" : "Save Profile"}
+            </button>
+            {profileOk && <span className="text-sm text-green-600">Saved!</span>}
+            {profileErr && <span className="text-sm text-red-600">{profileErr}</span>}
+          </div>
+          <p className="text-xs text-gray-400">
+            Your profile is public at{" "}
+            <a href={`/users/${user.username}`} className="text-nexus-500 hover:underline">
+              /users/{user.username}
+            </a>
+          </p>
+        </form>
       </div>
 
       {/* Agents list */}

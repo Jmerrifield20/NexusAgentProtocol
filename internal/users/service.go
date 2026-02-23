@@ -26,6 +26,7 @@ type userRepo interface {
 	LinkOAuth(ctx context.Context, userID uuid.UUID, provider, providerID string) error
 	SetEmailVerified(ctx context.Context, userID uuid.UUID) error
 	SetPasswordHash(ctx context.Context, userID uuid.UUID, hash string) error
+	UpdateProfile(ctx context.Context, userID uuid.UUID, bio, avatarURL, websiteURL string) error
 	CreateVerificationToken(ctx context.Context, userID uuid.UUID, token string, expires time.Time) error
 	UseVerificationToken(ctx context.Context, token string) (*User, error)
 	CreatePasswordResetToken(ctx context.Context, userID uuid.UUID, token string, expires time.Time) error
@@ -139,6 +140,37 @@ func (s *UserService) VerifyEmail(ctx context.Context, token string) (*User, err
 // GetByID retrieves a user by ID.
 func (s *UserService) GetByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	return s.repo.GetByID(ctx, id)
+}
+
+// GetByUsername retrieves a user by their username slug.
+func (s *UserService) GetByUsername(ctx context.Context, username string) (*User, error) {
+	return s.repo.GetByUsername(ctx, username)
+}
+
+// GetPublicProfile returns the public-facing profile for the given username.
+// Returns ErrNotFound if the user does not exist or has public_profile = false.
+func (s *UserService) GetPublicProfile(ctx context.Context, username string) (*PublicProfile, error) {
+	u, err := s.repo.GetByUsername(ctx, username)
+	if err != nil {
+		return nil, err
+	}
+	if !u.PublicProfile {
+		return nil, ErrNotFound
+	}
+	return &PublicProfile{
+		Username:      u.Username,
+		DisplayName:   u.DisplayName,
+		Bio:           u.Bio,
+		AvatarURL:     u.AvatarURL,
+		WebsiteURL:    u.WebsiteURL,
+		EmailVerified: u.EmailVerified,
+		MemberSince:   u.CreatedAt,
+	}, nil
+}
+
+// UpdateProfile updates the bio, avatar URL, and website URL for a user.
+func (s *UserService) UpdateProfile(ctx context.Context, userID uuid.UUID, bio, avatarURL, websiteURL string) error {
+	return s.repo.UpdateProfile(ctx, userID, bio, avatarURL, websiteURL)
 }
 
 // IsEmailVerified returns true if the user's email has been verified.
