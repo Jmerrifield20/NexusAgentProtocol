@@ -1,12 +1,13 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.25-alpine AS builder
+FROM golang:1.22-alpine AS builder
 
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /registry ./cmd/registry
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /registry ./cmd/registry && \
+    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /migrate  ./cmd/migrate
 
 # --- runtime ---
 FROM alpine:3.20
@@ -14,6 +15,7 @@ RUN apk add --no-cache ca-certificates tzdata wget
 WORKDIR /app
 
 COPY --from=builder /registry /app/registry
+COPY --from=builder /migrate  /app/migrate
 COPY configs/registry.yaml /app/configs/registry.yaml
 
 EXPOSE 8080
