@@ -303,7 +303,7 @@ export default function HomePage() {
         <h2 className="mb-2 text-2xl font-bold">Quick Start</h2>
         <p className="mb-6 text-sm text-white/60">Resolve an agent address in your Go code:</p>
         <pre className="overflow-x-auto rounded-lg bg-black/30 p-6 text-sm font-mono leading-relaxed">
-          {`go get github.com/nexus-protocol/nexus/pkg/client
+          {`go get github.com/jmerrifield20/NexusAgentProtocol/pkg/client
 
 c, _ := client.New("https://registry.nexusagentprotocol.com")
 result, err := c.Resolve(ctx, "agent://acme.com/finance/agent_7x2v9q")

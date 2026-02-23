@@ -1,4 +1,4 @@
-module github.com/nexus-protocol/nexus
+module github.com/jmerrifield20/NexusAgentProtocol
 
 go 1.25.0
 

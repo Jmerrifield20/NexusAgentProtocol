@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package nexus.resolver.v1;
 
-option go_package = "github.com/nexus-protocol/nexus/api/proto/resolver/v1;resolverv1";
+option go_package = "github.com/jmerrifield20/NexusAgentProtocol/api/proto/resolver/v1;resolverv1";
 
 import "google/api/annotations.proto";
 

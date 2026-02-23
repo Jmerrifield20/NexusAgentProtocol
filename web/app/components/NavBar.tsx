@@ -35,7 +35,7 @@ export default function NavBar() {
             Developers
           </a>
           <a
-            href="https://github.com/nexus-protocol/nexus"
+            href="https://github.com/jmerrifield20/NexusAgentProtocol"
             className="rounded-md bg-nexus-500 px-4 py-2 text-white hover:bg-indigo-600"
             target="_blank"
             rel="noreferrer"

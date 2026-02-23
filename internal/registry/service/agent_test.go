@@ -7,11 +7,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/nexus-protocol/nexus/internal/identity"
-	"github.com/nexus-protocol/nexus/internal/registry/model"
-	"github.com/nexus-protocol/nexus/internal/registry/repository"
-	"github.com/nexus-protocol/nexus/internal/registry/service"
-	"github.com/nexus-protocol/nexus/internal/trustledger"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/identity"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/model"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/repository"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/service"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/trustledger"
 	"go.uber.org/zap"
 )
 

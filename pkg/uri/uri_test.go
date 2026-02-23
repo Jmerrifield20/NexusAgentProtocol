@@ -3,7 +3,7 @@ package uri_test
 import (
 	"testing"
 
-	"github.com/nexus-protocol/nexus/pkg/uri"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/uri"
 )
 
 func TestParse_valid(t *testing.T) {

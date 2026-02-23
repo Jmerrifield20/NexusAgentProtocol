@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/nexus-protocol/nexus/pkg/agentcard"
-	"github.com/nexus-protocol/nexus/pkg/client"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/agentcard"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/client"
 )
 
 // ToolDefinition is the MCP tool descriptor sent in tools/list responses.

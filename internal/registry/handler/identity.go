@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/nexus-protocol/nexus/internal/identity"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/identity"
 	"go.uber.org/zap"
 )
 

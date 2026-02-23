@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/nexus-protocol/nexus/internal/registry/model"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/model"
 )
 
 // ErrNotFound is returned when an agent is not found in the database.

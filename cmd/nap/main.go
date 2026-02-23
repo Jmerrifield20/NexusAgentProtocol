@@ -12,9 +12,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/nexus-protocol/nexus/pkg/agentcard"
-	"github.com/nexus-protocol/nexus/pkg/client"
-	"github.com/nexus-protocol/nexus/pkg/uri"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/agentcard"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/client"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/uri"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nexus-protocol/nexus/internal/resolver"
-	resolverv1 "github.com/nexus-protocol/nexus/api/proto/resolver/v1"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/resolver"
+	resolverv1 "github.com/jmerrifield20/NexusAgentProtocol/api/proto/resolver/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

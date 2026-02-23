@@ -11,8 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/nexus-protocol/nexus/internal/identity"
-	"github.com/nexus-protocol/nexus/internal/users"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/identity"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/users"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"

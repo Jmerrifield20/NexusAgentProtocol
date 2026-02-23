@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/nexus-protocol/nexus/internal/trustledger"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/trustledger"
 )
 
 var ctx = context.Background()

@@ -58,5 +58,5 @@ changelog:
 
 release:
   github:
-    owner: nexus-protocol
-    name: nexus
+    owner: jmerrifield20
+    name: NexusAgentProtocol

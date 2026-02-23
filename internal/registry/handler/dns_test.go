@@ -13,11 +13,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	internaldns "github.com/nexus-protocol/nexus/internal/dns"
-	"github.com/nexus-protocol/nexus/internal/registry/handler"
-	"github.com/nexus-protocol/nexus/internal/registry/model"
-	"github.com/nexus-protocol/nexus/internal/registry/repository"
-	"github.com/nexus-protocol/nexus/internal/registry/service"
+	internaldns "github.com/jmerrifield20/NexusAgentProtocol/internal/dns"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/handler"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/model"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/repository"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/service"
 	"go.uber.org/zap"
 )
 

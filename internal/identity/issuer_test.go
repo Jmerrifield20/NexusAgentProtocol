@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nexus-protocol/nexus/internal/identity"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/identity"
 )
 
 // newTestCA is a helper that creates a fresh CA in a temp dir.

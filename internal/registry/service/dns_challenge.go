@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	internaldns "github.com/nexus-protocol/nexus/internal/dns"
-	"github.com/nexus-protocol/nexus/internal/registry/model"
-	"github.com/nexus-protocol/nexus/internal/registry/repository"
+	internaldns "github.com/jmerrifield20/NexusAgentProtocol/internal/dns"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/model"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/repository"
 	"go.uber.org/zap"
 )
 

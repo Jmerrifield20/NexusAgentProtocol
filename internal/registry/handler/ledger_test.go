@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/nexus-protocol/nexus/internal/registry/handler"
-	"github.com/nexus-protocol/nexus/internal/trustledger"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/handler"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/trustledger"
 	"go.uber.org/zap"
 )
 

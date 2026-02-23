@@ -688,9 +688,9 @@ curl -s -X POST http://localhost:8080/api/v1/agents/<UUID>/revoke \\
             <p>
               The <code className="font-mono rounded bg-gray-100 px-1">pkg/client</code> package provides a typed Go client for the registry API.
             </p>
-            <Code>{`go get github.com/nexus-protocol/nexus/pkg/client`}</Code>
+            <Code>{`go get github.com/jmerrifield20/NexusAgentProtocol/pkg/client`}</Code>
             <p className="font-medium text-gray-800">Resolve an agent</p>
-            <Code>{`import "github.com/nexus-protocol/nexus/pkg/client"
+            <Code>{`import "github.com/jmerrifield20/NexusAgentProtocol/pkg/client"
 
 c, err := client.New("https://registry.nexusagentprotocol.com")
 if err != nil {

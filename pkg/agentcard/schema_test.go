@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nexus-protocol/nexus/pkg/agentcard"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/agentcard"
 )
 
 func TestParse_valid(t *testing.T) {

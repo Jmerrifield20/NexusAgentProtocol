@@ -134,7 +134,7 @@ Agent A                         Nexus Registry                     Agent B
 ### Step 1 — Obtain the Go SDK
 
 ```go
-import "github.com/nexus-protocol/nexus/pkg/client"
+import "github.com/jmerrifield20/NexusAgentProtocol/pkg/client"
 ```
 
 ### Step 2 — Register Your Bot (one-time)
@@ -169,7 +169,7 @@ import (
     "net/http"
     "os"
 
-    "github.com/nexus-protocol/nexus/pkg/client"
+    "github.com/jmerrifield20/NexusAgentProtocol/pkg/client"
 )
 
 func main() {
@@ -207,7 +207,7 @@ Add the NAP middleware to your existing HTTP server. It validates the incoming J
 ```go
 import (
     "github.com/gin-gonic/gin"
-    "github.com/nexus-protocol/nexus/internal/identity"
+    "github.com/jmerrifield20/NexusAgentProtocol/internal/identity"
 )
 
 router := gin.New()
@@ -421,4 +421,4 @@ curl https://registry.nexusagentprotocol.com/api/v1/ledger/verify
 
 ---
 
-*NAP is an open protocol. The registry source is at `github.com/nexus-protocol/nexus`.*
+*NAP is an open protocol. The registry source is at `github.com/jmerrifield20/NexusAgentProtocol`.*

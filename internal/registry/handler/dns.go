@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/nexus-protocol/nexus/internal/registry/service"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/service"
 	"go.uber.org/zap"
 )
 

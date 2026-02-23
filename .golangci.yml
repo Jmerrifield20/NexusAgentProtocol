@@ -18,7 +18,7 @@ linters-settings:
   gofmt:
     simplify: true
   goimports:
-    local-prefixes: github.com/nexus-protocol/nexus
+    local-prefixes: github.com/jmerrifield20/NexusAgentProtocol
 
 issues:
   exclude-rules:

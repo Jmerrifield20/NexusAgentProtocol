@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"time"
 
-	resolverv1 "github.com/nexus-protocol/nexus/api/proto/resolver/v1"
+	resolverv1 "github.com/jmerrifield20/NexusAgentProtocol/api/proto/resolver/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

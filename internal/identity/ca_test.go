@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/nexus-protocol/nexus/internal/identity"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/identity"
 )
 
 func TestCAManager_Create(t *testing.T) {

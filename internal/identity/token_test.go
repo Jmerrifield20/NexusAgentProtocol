@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nexus-protocol/nexus/internal/identity"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/identity"
 )
 
 func newTestTokenIssuer(t *testing.T) *identity.TokenIssuer {

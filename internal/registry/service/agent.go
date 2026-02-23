@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/nexus-protocol/nexus/internal/identity"
-	"github.com/nexus-protocol/nexus/internal/registry/model"
-	"github.com/nexus-protocol/nexus/internal/trustledger"
-	"github.com/nexus-protocol/nexus/pkg/agentcard"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/identity"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/model"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/trustledger"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/agentcard"
 	"go.uber.org/zap"
 )
 

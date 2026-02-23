@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/nexus-protocol/nexus/internal/users"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/users"
 	"go.uber.org/zap"
 )
 

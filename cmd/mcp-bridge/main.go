@@ -26,8 +26,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/nexus-protocol/nexus/internal/mcpbridge"
-	"github.com/nexus-protocol/nexus/pkg/client"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/mcpbridge"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/client"
 	"github.com/spf13/cobra"
 )
 

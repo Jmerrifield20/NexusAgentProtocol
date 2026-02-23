@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nexus-protocol/nexus/pkg/client"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/client"
 )
 
 // ── Stub server ─────────────────────────────────────────────────────────

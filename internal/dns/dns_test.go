@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nexus-protocol/nexus/internal/dns"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/dns"
 )
 
 func TestNewChallenge(t *testing.T) {

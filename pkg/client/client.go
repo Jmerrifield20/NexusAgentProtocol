@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nexus-protocol/nexus/pkg/uri"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/uri"
 )
 
 // ErrVerificationPending is returned by VerifyDNSChallenge when the DNS TXT

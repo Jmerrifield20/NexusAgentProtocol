@@ -11,7 +11,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
-	"github.com/nexus-protocol/nexus/internal/email"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/email"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )

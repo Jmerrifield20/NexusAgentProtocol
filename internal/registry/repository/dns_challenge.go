@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/nexus-protocol/nexus/internal/registry/model"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/model"
 )
 
 // ErrChallengeNotFound is returned when a DNS challenge is not found.

@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
-	resolverv1 "github.com/nexus-protocol/nexus/api/proto/resolver/v1"
-	"github.com/nexus-protocol/nexus/internal/resolver"
+	resolverv1 "github.com/jmerrifield20/NexusAgentProtocol/api/proto/resolver/v1"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/resolver"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"

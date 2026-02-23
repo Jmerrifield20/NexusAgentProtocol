@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/nexus-protocol/nexus/internal/registry/service"
-	"github.com/nexus-protocol/nexus/pkg/agentcard"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/service"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/agentcard"
 	"go.uber.org/zap"
 )
 
