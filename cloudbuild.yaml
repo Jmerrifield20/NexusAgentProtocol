@@ -3,12 +3,9 @@ steps:
     args:
       - build
       - -t
-      - '$_IMAGE:$SHORT_SHA'
-      - -t
       - '$_IMAGE:latest'
       - -f
       - docker/Dockerfile.registry
       - .
 images:
   - '$_IMAGE:latest'
-  - '$_IMAGE:$SHORT_SHA'
