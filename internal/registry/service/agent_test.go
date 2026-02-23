@@ -177,6 +177,19 @@ func (s *stubAgentRepo) ListByOwnerUserID(_ context.Context, ownerUserID uuid.UU
 	return out, nil
 }
 
+func (s *stubAgentRepo) Search(_ context.Context, q string, limit, offset int) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if strings.Contains(a.DisplayName, q) || strings.Contains(a.CapabilityNode, q) {
+			cp := *a
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
 func (s *stubAgentRepo) SearchByOrg(_ context.Context, orgName string, limit, offset int) ([]*model.Agent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

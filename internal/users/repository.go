@@ -39,11 +39,11 @@ func (r *UserRepository) Create(ctx context.Context, u *User) error {
 	u.UpdatedAt = now
 
 	q := `
-		INSERT INTO users (id, email, password_hash, display_name, username, tier, email_verified, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+		INSERT INTO users (id, email, password_hash, display_name, username, email_verified, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	_, err := r.db.Exec(ctx, q,
 		u.ID, u.Email, u.PasswordHash, u.DisplayName, u.Username,
-		u.Tier, u.EmailVerified, u.CreatedAt, u.UpdatedAt,
+		u.EmailVerified, u.CreatedAt, u.UpdatedAt,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -234,7 +234,7 @@ func (r *UserRepository) scanOne(ctx context.Context, q string, args ...any) (*U
 	var u User
 	if err := rows.Scan(
 		&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Username,
-		&u.Tier, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt,
+		&u.EmailVerified, &u.CreatedAt, &u.UpdatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("scan user: %w", err)
 	}

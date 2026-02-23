@@ -56,7 +56,7 @@ interface EditForm {
   version:      string;
   tags:         string; // comma-separated in UI
   support_url:  string;
-  pricing_info: string;
+
 }
 
 function formFromAgent(a: Agent): EditForm {
@@ -67,7 +67,6 @@ function formFromAgent(a: Agent): EditForm {
     version:      a.version ?? "",
     tags:         (a.tags ?? []).join(", "),
     support_url:  a.support_url ?? "",
-    pricing_info: a.pricing_info ?? "",
   };
 }
 
@@ -134,7 +133,6 @@ export default function AgentDetailPage() {
         version:      form.version,
         tags,
         support_url:  form.support_url,
-        pricing_info: form.pricing_info,
       }),
     }).catch(() => null);
 
@@ -287,12 +285,6 @@ export default function AgentDetailPage() {
           </DetailRow>
         )}
 
-        {agent.pricing_info && (
-          <DetailRow label="Pricing">
-            <span className="text-xs text-gray-600 whitespace-pre-wrap">{agent.pricing_info}</span>
-          </DetailRow>
-        )}
-
         <DetailRow label="Health">
           <HealthBadge status={agent.health_status || "unknown"} />
           {agent.last_seen_at && (
@@ -396,18 +388,6 @@ export default function AgentDetailPage() {
               placeholder="https://docs.example.com/support"
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:border-nexus-500 focus:outline-none"
             />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Pricing / Rate Limits</label>
-            <textarea
-              value={form.pricing_info}
-              onChange={set("pricing_info")}
-              rows={2}
-              placeholder="Free up to 100 req/day. Pro plan: $0.001/req."
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-nexus-500 focus:outline-none resize-none"
-            />
-            <p className="mt-1 text-xs text-gray-400">Free-form description of cost, quotas, or SLA.</p>
           </div>
 
           {saveError && <p className="text-xs text-red-600">{saveError}</p>}

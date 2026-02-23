@@ -16,7 +16,6 @@ type UserTokenClaims struct {
 	UserID   string `json:"user_id"`
 	Email    string `json:"email"`
 	Username string `json:"username"`
-	Tier     string `json:"tier"`
 	Type     string `json:"type"` // "user" or "oauth-state"
 }
 
@@ -45,7 +44,7 @@ func NewUserTokenIssuer(key *rsa.PrivateKey, issuerURL string, ttl time.Duration
 }
 
 // Issue creates a signed user session token.
-func (u *UserTokenIssuer) Issue(userID, email, username, tier string) (string, error) {
+func (u *UserTokenIssuer) Issue(userID, email, username string) (string, error) {
 	now := time.Now().UTC()
 	claims := UserTokenClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -58,7 +57,6 @@ func (u *UserTokenIssuer) Issue(userID, email, username, tier string) (string, e
 		UserID:   userID,
 		Email:    email,
 		Username: username,
-		Tier:     tier,
 		Type:     "user",
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)

@@ -51,7 +51,7 @@ func (s *UserService) SetFrontendURL(url string) {
 	s.frontendURL = url
 }
 
-// Signup creates a new free-tier user with email/password authentication.
+// Signup creates a new user with email/password authentication.
 // Returns the created user and the raw verification token.
 func (s *UserService) Signup(ctx context.Context, emailAddr, password, displayName string) (*User, string, error) {
 	if emailAddr == "" || password == "" {
@@ -80,7 +80,6 @@ func (s *UserService) Signup(ctx context.Context, emailAddr, password, displayNa
 		PasswordHash: string(hash),
 		DisplayName:  displayName,
 		Username:     username,
-		Tier:         TierFree,
 	}
 
 	if err := s.repo.Create(ctx, u); err != nil {
@@ -197,7 +196,6 @@ func (s *UserService) GetOrCreateFromOAuth(ctx context.Context, provider, provid
 		Email:         emailAddr,
 		DisplayName:   displayName,
 		Username:      username,
-		Tier:          TierFree,
 		EmailVerified: true, // OAuth login = email verified by provider
 	}
 	if err := s.repo.Create(ctx, u); err != nil {

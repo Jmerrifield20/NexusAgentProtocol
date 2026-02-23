@@ -151,7 +151,11 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 }
 
 // ListAgents handles GET /agents — returns paginated agent list.
+// Optional ?q= performs an inclusive partial-match search across name, description,
+// org, capability, agent_id, and tags. Without ?q=, returns all agents filtered
+// by the optional trust_root and capability_node params.
 func (h *AgentHandler) ListAgents(c *gin.Context) {
+	q := strings.TrimSpace(c.Query("q"))
 	trustRoot := c.Query("trust_root")
 	capNode := c.Query("capability_node")
 
@@ -164,7 +168,14 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 		offset = 0
 	}
 
-	agents, err := h.svc.List(c.Request.Context(), trustRoot, capNode, limit, offset)
+	var agents []*model.Agent
+	var err error
+
+	if q != "" {
+		agents, err = h.svc.Search(c.Request.Context(), q, limit, offset)
+	} else {
+		agents, err = h.svc.List(c.Request.Context(), trustRoot, capNode, limit, offset)
+	}
 	if err != nil {
 		h.logger.Error("list agents", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list agents"})

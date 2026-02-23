@@ -167,7 +167,7 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 		return
 	}
 
-	tok, err := h.tokens.Issue(u.ID.String(), u.Email, u.Username, string(u.Tier))
+	tok, err := h.tokens.Issue(u.ID.String(), u.Email, u.Username)
 	if err != nil {
 		h.logger.Error("issue user token after signup", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "token issuance failed"})
@@ -195,7 +195,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	tok, err := h.tokens.Issue(u.ID.String(), u.Email, u.Username, string(u.Tier))
+	tok, err := h.tokens.Issue(u.ID.String(), u.Email, u.Username)
 	if err != nil {
 		h.logger.Error("issue user token after login", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "token issuance failed"})
@@ -377,7 +377,7 @@ func (h *AuthHandler) OAuthCallback(c *gin.Context) {
 		return
 	}
 
-	tok, err := h.tokens.Issue(u.ID.String(), u.Email, u.Username, string(u.Tier))
+	tok, err := h.tokens.Issue(u.ID.String(), u.Email, u.Username)
 	if err != nil {
 		h.logger.Error("issue user token after oauth", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "token issuance failed"})

@@ -64,6 +64,7 @@ type agentRepo interface {
 	ListByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID, limit, offset int) ([]*model.Agent, error)
 	SearchByOrg(ctx context.Context, orgName string, limit, offset int) ([]*model.Agent, error)
 	SearchByCapability(ctx context.Context, capability, orgName string, limit, offset int) ([]*model.Agent, error)
+	Search(ctx context.Context, q string, limit, offset int) ([]*model.Agent, error)
 	CountByOwner(ctx context.Context, ownerUserID uuid.UUID) (int, error)
 	Update(ctx context.Context, agent *model.Agent) error
 	UpdateStatus(ctx context.Context, id uuid.UUID, status model.AgentStatus) error
@@ -181,7 +182,6 @@ func (s *AgentService) Register(ctx context.Context, req *model.RegisterRequest)
 
 		// Quota check — only enforced when MaxAgents > 0.
 		// Currently set to 0 (unlimited) for all users.
-		// Future: set per-plan limits here based on user's subscription tier.
 		if s.freeTier.MaxAgents > 0 {
 			count, err := s.repo.CountByOwner(ctx, *req.OwnerUserID)
 			if err != nil {
@@ -299,6 +299,11 @@ func (s *AgentService) List(ctx context.Context, trustRoot, capNode string, limi
 	return s.repo.List(ctx, trustRoot, capNode, limit, offset)
 }
 
+// Search returns agents matching the query string across multiple fields.
+func (s *AgentService) Search(ctx context.Context, q string, limit, offset int) ([]*model.Agent, error) {
+	return s.repo.Search(ctx, q, limit, offset)
+}
+
 // Update modifies an existing agent's mutable fields.
 func (s *AgentService) Update(ctx context.Context, id uuid.UUID, req *model.UpdateRequest) (*model.Agent, error) {
 	agent, err := s.repo.GetByID(ctx, id)
@@ -329,9 +334,6 @@ func (s *AgentService) Update(ctx context.Context, id uuid.UUID, req *model.Upda
 	}
 	if req.SupportURL != "" {
 		agent.SupportURL = req.SupportURL
-	}
-	if req.PricingInfo != "" {
-		agent.PricingInfo = req.PricingInfo
 	}
 
 	if err := s.repo.Update(ctx, agent); err != nil {

@@ -225,6 +225,19 @@ func (s *stubAgentRepo) CountByOwner(_ context.Context, ownerUserID uuid.UUID) (
 	return count, nil
 }
 
+func (s *stubAgentRepo) Search(_ context.Context, q string, limit, offset int) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if strings.Contains(a.DisplayName, q) || strings.Contains(a.CapabilityNode, q) {
+			cp := *a
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 func testCA(t *testing.T) *identity.CAManager {
@@ -774,7 +787,7 @@ func TestUpdateAgent_200_userOwnsAgent(t *testing.T) {
 	ownerID := uuid.New()
 	agent := registerHostedAgent(t, repo, ownerID)
 
-	tok, _ := userTokens.Issue(ownerID.String(), "user@example.com", "testuser", "free")
+	tok, _ := userTokens.Issue(ownerID.String(), "user@example.com", "testuser")
 	w := patchAgent(t, router, agent.ID.String(), tok)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 for owner, got %d: %s", w.Code, w.Body.String())
@@ -791,7 +804,7 @@ func TestUpdateAgent_403_userJWT_wrongOwner(t *testing.T) {
 
 	// Token for a completely different user
 	differentUserID := uuid.New()
-	tok, _ := userTokens.Issue(differentUserID.String(), "other@example.com", "other", "free")
+	tok, _ := userTokens.Issue(differentUserID.String(), "other@example.com", "other")
 	w := patchAgent(t, router, agent.ID.String(), tok)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for wrong owner, got %d: %s", w.Code, w.Body.String())
@@ -806,7 +819,7 @@ func TestUpdateAgent_403_userJWT_domainAgent(t *testing.T) {
 
 	// Domain agent: registered without an owner_user_id (the normal domain path)
 	created := registerAgent(t, router)
-	tok, _ := userTokens.Issue(uuid.New().String(), "anyone@example.com", "anyone", "free")
+	tok, _ := userTokens.Issue(uuid.New().String(), "anyone@example.com", "anyone")
 	w := patchAgent(t, router, created["id"].(string), tok)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for user JWT on domain agent, got %d: %s", w.Code, w.Body.String())

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -247,6 +248,50 @@ func (r *AgentRepository) ListByOwnerUserID(ctx context.Context, ownerUserID uui
 	return agents, rows.Err()
 }
 
+// Search returns agents whose display_name, description, trust_root, capability_node,
+// agent_id, or tags contain the query string (case-insensitive partial match).
+func (r *AgentRepository) Search(ctx context.Context, q string, limit, offset int) ([]*model.Agent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	pattern := "%" + strings.ToLower(q) + "%"
+	query := `
+		SELECT * FROM agents
+		WHERE lower(display_name)    LIKE $1
+		   OR lower(description)     LIKE $1
+		   OR lower(trust_root)      LIKE $1
+		   OR lower(capability_node) LIKE $1
+		   OR lower(agent_id)        LIKE $1
+		   OR EXISTS (
+		        SELECT 1 FROM unnest(tags) t WHERE lower(t) LIKE $1
+		   )
+		ORDER BY
+		  CASE
+		    WHEN cert_serial != '' AND registration_type = 'domain' THEN 1
+		    WHEN registration_type = 'domain'                        THEN 2
+		    WHEN registration_type = 'nap_hosted'                    THEN 3
+		    ELSE 4
+		  END,
+		  created_at DESC
+		LIMIT $2 OFFSET $3`
+
+	rows, err := r.db.Query(ctx, query, pattern, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var agents []*model.Agent
+	for rows.Next() {
+		a, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
 // CountByOwner returns the number of non-revoked agents owned by a user.
 func (r *AgentRepository) CountByOwner(ctx context.Context, ownerUserID uuid.UUID) (int, error) {
 	var count int
@@ -275,8 +320,7 @@ func (r *AgentRepository) Update(ctx context.Context, agent *model.Agent) error 
 			updated_at    = $7,
 			version       = $8,
 			tags          = $9,
-			support_url   = $10,
-			pricing_info  = $11
+			support_url   = $10
 		WHERE id = $1`
 
 	tags := agent.Tags
@@ -286,7 +330,7 @@ func (r *AgentRepository) Update(ctx context.Context, agent *model.Agent) error 
 	tag, err := r.db.Exec(ctx, query,
 		agent.ID, agent.DisplayName, agent.Description,
 		agent.Endpoint, agent.PublicKeyPEM, meta, agent.UpdatedAt,
-		agent.Version, tags, agent.SupportURL, agent.PricingInfo,
+		agent.Version, tags, agent.SupportURL,
 	)
 	if err != nil {
 		return err
@@ -373,7 +417,7 @@ func (r *AgentRepository) scan(rows pgx.Rows) (*model.Agent, error) {
 		&a.Status, &a.CertSerial, &a.PublicKeyPEM, &metaRaw,
 		&a.CreatedAt, &a.UpdatedAt, &a.ExpiresAt,
 		&a.OwnerUserID, &a.RegistrationType,
-		&a.Version, &a.Tags, &a.SupportURL, &a.PricingInfo,
+		&a.Version, &a.Tags, &a.SupportURL,
 		&a.LastSeenAt, &a.HealthStatus,
 	)
 	if err != nil {

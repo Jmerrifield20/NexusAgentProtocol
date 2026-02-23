@@ -215,9 +215,6 @@ func TestSignup_success(t *testing.T) {
 	if u.Username == "" {
 		t.Error("expected non-empty username")
 	}
-	if u.Tier != users.TierFree {
-		t.Errorf("expected free tier, got %s", u.Tier)
-	}
 	if u.EmailVerified {
 		t.Error("email should not be verified immediately")
 	}

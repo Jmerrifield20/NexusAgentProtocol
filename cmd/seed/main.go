@@ -137,7 +137,6 @@ type seedAgent struct {
 	Version          string
 	Tags             []string
 	SupportURL       string
-	PricingInfo      string
 	CreatedAt        time.Time
 }
 
@@ -166,7 +165,6 @@ var agents = []seedAgent{
 		Version:          "2.1.0",
 		Tags:             []string{"tax", "filing", "accounting", "usa"},
 		SupportURL:       "https://docs.acme.com/agents/tax-advisor",
-		PricingInfo:      "Internal use only. No external billing.",
 		CreatedAt:        daysAgo(120),
 	},
 	// URI: agent://stripe.com/commerce/agent_checkout-bot
@@ -185,7 +183,6 @@ var agents = []seedAgent{
 		Version:          "1.4.2",
 		Tags:             []string{"payments", "checkout", "refunds", "disputes"},
 		SupportURL:       "https://stripe.com/docs/agents",
-		PricingInfo:      "Pay-per-use: $0.002 per transaction processed.",
 		CreatedAt:        daysAgo(200),
 	},
 	// URI: agent://salesforce.com/commerce/agent_pipeline-mgr
@@ -204,7 +201,6 @@ var agents = []seedAgent{
 		Version:          "3.0.1",
 		Tags:             []string{"crm", "pipeline", "sales", "deals"},
 		SupportURL:       "https://help.salesforce.com/agents",
-		PricingInfo:      "Included with Salesforce Enterprise tier.",
 		CreatedAt:        daysAgo(90),
 	},
 
@@ -241,7 +237,6 @@ var agents = []seedAgent{
 		Version:          "1.2.0",
 		Tags:             []string{"healthcare", "intake", "hipaa", "ehr"},
 		SupportURL:       "https://medcenter.org/support",
-		PricingInfo:      "HIPAA BAA required. Contact for enterprise pricing.",
 		CreatedAt:        daysAgo(30),
 	},
 	// URI: agent://legalops.ai/legal/agent_contract-analyzer
@@ -259,7 +254,6 @@ var agents = []seedAgent{
 		Version:          "2.0.0",
 		Tags:             []string{"legal", "contracts", "nda", "clause-extraction"},
 		SupportURL:       "https://legalops.ai/docs",
-		PricingInfo:      "Starter: 50 contracts/mo free. Pro: $0.10/contract.",
 		CreatedAt:        daysAgo(15),
 	},
 
@@ -356,16 +350,16 @@ func seedAgents(ctx context.Context, db *pgxpool.Pool) error {
 			id, trust_root, capability_node, agent_id,
 			display_name, description, endpoint, owner_domain,
 			status, cert_serial, metadata,
-			version, tags, support_url, pricing_info,
+			version, tags, support_url,
 			created_at, updated_at,
 			owner_user_id, registration_type
 		) VALUES (
 			$1, $2, $3, $4,
 			$5, $6, $7, $8,
 			$9, $10, '{}',
-			$11, $12, $13, $14,
-			$15, $15,
-			$16, $17
+			$11, $12, $13,
+			$14, $14,
+			$15, $16
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			trust_root        = EXCLUDED.trust_root,
@@ -380,7 +374,6 @@ func seedAgents(ctx context.Context, db *pgxpool.Pool) error {
 			version           = EXCLUDED.version,
 			tags              = EXCLUDED.tags,
 			support_url       = EXCLUDED.support_url,
-			pricing_info      = EXCLUDED.pricing_info,
 			owner_user_id     = EXCLUDED.owner_user_id,
 			registration_type = EXCLUDED.registration_type,
 			updated_at        = now()`
@@ -398,13 +391,12 @@ func seedAgents(ctx context.Context, db *pgxpool.Pool) error {
 		certSerial := a.CertSerial
 		version := a.Version
 		supportURL := a.SupportURL
-		pricingInfo := a.PricingInfo
 
 		if _, err := db.Exec(ctx, q,
 			a.ID, a.TrustRoot, a.CapabilityNode, a.AgentID,
 			a.DisplayName, a.Description, a.Endpoint, ownerDomain,
 			a.Status, certSerial,
-			version, a.Tags, supportURL, pricingInfo,
+			version, a.Tags, supportURL,
 			a.CreatedAt,
 			a.OwnerUserID, a.RegistrationType,
 		); err != nil {

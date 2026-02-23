@@ -223,12 +223,6 @@ export default function PublicAgentDetailPage() {
           </DetailRow>
         )}
 
-        {agent.pricing_info && (
-          <DetailRow label="Pricing">
-            <span className="text-xs text-gray-600 whitespace-pre-wrap">{agent.pricing_info}</span>
-          </DetailRow>
-        )}
-
         <DetailRow label="Health">
           <HealthBadge status={agent.health_status || "unknown"} />
           {agent.last_seen_at && (

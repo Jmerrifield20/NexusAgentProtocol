@@ -61,7 +61,6 @@ type Agent struct {
 	Version     string   `json:"version"      db:"version"`
 	Tags        []string `json:"tags"         db:"tags"`
 	SupportURL  string   `json:"support_url"  db:"support_url"`
-	PricingInfo string   `json:"pricing_info" db:"pricing_info"`
 	// System-managed fields updated by health checks.
 	LastSeenAt   *time.Time `json:"last_seen_at,omitempty" db:"last_seen_at"`
 	HealthStatus string     `json:"health_status"          db:"health_status"`
@@ -166,5 +165,4 @@ type UpdateRequest struct {
 	Version     string   `json:"version"`
 	Tags        []string `json:"tags"`
 	SupportURL  string   `json:"support_url"  binding:"omitempty,url"`
-	PricingInfo string   `json:"pricing_info"`
 }

@@ -45,7 +45,6 @@ func (s *stubUserSvc) Signup(_ context.Context, email, _, _ string) (*users.User
 		ID:       uuid.New(),
 		Email:    email,
 		Username: "alice",
-		Tier:     users.TierFree,
 	}
 	return u, "tok-" + email, nil
 }
@@ -57,7 +56,7 @@ func (s *stubUserSvc) Login(_ context.Context, email, _ string) (*users.User, er
 	if s.loginUser != nil {
 		return s.loginUser, nil
 	}
-	return &users.User{ID: uuid.New(), Email: email, Username: "alice", Tier: users.TierFree}, nil
+	return &users.User{ID: uuid.New(), Email: email, Username: "alice"}, nil
 }
 
 func (s *stubUserSvc) VerifyEmail(_ context.Context, _ string) (*users.User, error) {
@@ -85,7 +84,7 @@ func (s *stubUserSvc) GetOrCreateFromOAuth(_ context.Context, _, _, email, _ str
 	if s.oauthUser != nil {
 		return s.oauthUser, s.oauthNew, nil
 	}
-	return &users.User{ID: uuid.New(), Email: email, Username: "alice", Tier: users.TierFree}, true, nil
+	return &users.User{ID: uuid.New(), Email: email, Username: "alice"}, true, nil
 }
 
 // ── Test setup ────────────────────────────────────────────────────────────

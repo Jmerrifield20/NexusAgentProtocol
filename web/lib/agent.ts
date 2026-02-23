@@ -17,7 +17,6 @@ export interface Agent {
   version: string;
   tags: string[];
   support_url: string;
-  pricing_info: string;
   last_seen_at: string | null;
   health_status: string;
 }
