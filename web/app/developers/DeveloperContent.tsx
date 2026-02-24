@@ -121,19 +121,25 @@ const TIER_BADGES: Record<string, { label: string; className: string }> = {
 
 // ── Nav items ───────────────────────────────────────────────────────────────
 const NAV = [
-  { id: "overview",         label: "Overview" },
-  { id: "concepts",         label: "Core Concepts" },
-  { id: "quickstart",       label: "Quick Start" },
-  { id: "agent-lifecycle",  label: "Agent Lifecycle" },
-  { id: "trust-tiers",      label: "Trust Tiers" },
-  { id: "dns-verification", label: "DNS-01 Verification" },
-  { id: "a2a",              label: "A2A Compatibility" },
-  { id: "mcp-manifest",     label: "MCP Manifest" },
-  { id: "threat-scoring",   label: "Threat Scoring" },
-  { id: "api-reference",    label: "API Reference" },
-  { id: "trust-ledger",     label: "Trust Ledger" },
-  { id: "auth",             label: "Authentication" },
-  { id: "sdk",              label: "Go SDK" },
+  { id: "overview",           label: "Overview" },
+  { id: "concepts",           label: "Core Concepts" },
+  { id: "quickstart",         label: "Quick Start" },
+  { id: "agent-lifecycle",    label: "Agent Lifecycle" },
+  { id: "endpoint-reqs",      label: "Endpoint Requirements" },
+  { id: "trust-tiers",        label: "Trust Tiers" },
+  { id: "dns-verification",   label: "DNS-01 Verification" },
+  { id: "connecting-agents",  label: "Connecting to Other Agents" },
+  { id: "a2a",                label: "A2A Compatibility" },
+  { id: "mcp-manifest",       label: "MCP Manifest" },
+  { id: "threat-scoring",     label: "Threat Scoring" },
+  { id: "webhooks",           label: "Webhooks" },
+  { id: "health-monitoring",  label: "Health Monitoring" },
+  { id: "api-reference",      label: "API Reference" },
+  { id: "trust-ledger",       label: "Trust Ledger" },
+  { id: "auth",               label: "Authentication" },
+  { id: "mtls",               label: "Agent-to-Agent mTLS" },
+  { id: "sdk",                label: "Go SDK" },
+  { id: "sdk-typescript",     label: "TypeScript SDK" },
 ];
 
 const ALL_IDS = NAV.map((n) => n.id);
@@ -271,6 +277,9 @@ export default function DeveloperContent() {
                 { term: "Trust Ledger",         def: "An append-only hash chain recording every registration and activation event. Anyone can independently verify the full history of any agent." },
                 { term: "Task Token",           def: "A short-lived RS256 JWT issued at activation. Required for protected operations like revoke and delete." },
                 { term: "Registration Type",    def: 'Either domain (company-owned domain, DNS-01 verified) or nap_hosted (free tier, hosted under nexusagentprotocol.com, email-verified).' },
+                { term: "Webhook",              def: "An HTTP callback subscription that fires when agent events occur. Supports 6 event types (registered, activated, revoked, suspended, deprecated, health_degraded). Each delivery is signed with HMAC-SHA256 via the X-NAP-Signature header for verification." },
+                { term: "Health Status",         def: "The registry periodically probes every active agent's endpoint (HEAD then GET fallback, 10-second timeout, 5-minute interval). After 3 consecutive failures the agent is marked degraded; it auto-recovers when the next probe succeeds." },
+                { term: "Deprecated Agent",      def: "An agent marked end-of-life via POST /agents/:id/deprecate. Still resolves normally but responses include Sunset, X-NAP-Deprecated, and X-NAP-Replacement headers so callers can migrate." },
               ].map((c) => (
                 <div key={c.term} className="rounded-lg border border-gray-200 bg-white p-4">
                   <p className="font-semibold text-gray-900 mb-1">{c.term}</p>
@@ -385,25 +394,131 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \\
           <Section title="Agent Lifecycle" {...s("agent-lifecycle")}>
             <p>Every agent moves through the following states:</p>
             <div className="flex items-center gap-2 flex-wrap">
-              {["pending", "→", "active", "→", "revoked / expired"].map((s, i) => (
-                s === "→"
+              {["pending", "→", "active", "→", "suspended / deprecated / revoked / expired"].map((st, i) => (
+                st === "→"
                   ? <span key={i} className="text-gray-400 font-mono">→</span>
-                  : <span key={i} className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700">{s}</span>
+                  : <span key={i} className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700">{st}</span>
               ))}
             </div>
             <div className="space-y-3">
               {[
-                { state: "pending",          color: "bg-yellow-100 text-yellow-700", desc: "Created by POST /agents. Domain ownership (or email for nap_hosted) has not yet been verified. The agent is not resolvable." },
-                { state: "active",           color: "bg-green-100 text-green-700",   desc: "Activated after verification passes. For domain agents, an X.509 cert and NAP endorsement are issued. For hosted agents, email verification is required." },
-                { state: "revoked",          color: "bg-red-100 text-red-700",       desc: "Manually revoked via POST /agents/:id/revoke. The agent remains in the registry but resolve returns an error." },
-                { state: "expired",          color: "bg-gray-100 text-gray-700",     desc: "The agent's certificate has passed its validity window. Re-activation is required." },
-              ].map((s) => (
-                <div key={s.state} className="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-4">
-                  <span className={`mt-0.5 shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${s.color}`}>{s.state}</span>
-                  <p className="text-sm text-gray-600">{s.desc}</p>
+                { state: "pending",    color: "bg-yellow-100 text-yellow-700",  desc: "Created by POST /agents. Domain ownership (or email for nap_hosted) has not yet been verified. The agent is not resolvable." },
+                { state: "active",     color: "bg-green-100 text-green-700",    desc: "Activated after verification passes. For domain agents, an X.509 cert and NAP endorsement are issued. For hosted agents, email verification is required." },
+                { state: "suspended",  color: "bg-orange-100 text-orange-700",  desc: "Temporarily disabled via POST /agents/:id/suspend. The agent is not resolvable but can be restored to active with POST /agents/:id/restore." },
+                { state: "deprecated", color: "bg-purple-100 text-purple-700",  desc: "Marked end-of-life via POST /agents/:id/deprecate. Still resolves, but responses include Sunset, X-NAP-Deprecated, and X-NAP-Replacement headers so callers can migrate." },
+                { state: "revoked",    color: "bg-red-100 text-red-700",        desc: "Permanently revoked via POST /agents/:id/revoke (with reason). The agent remains in the registry but resolve returns an error. Added to the CRL." },
+                { state: "expired",    color: "bg-gray-100 text-gray-700",      desc: "The agent's certificate has passed its validity window. Re-activation is required." },
+              ].map((st) => (
+                <div key={st.state} className="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-4">
+                  <span className={`mt-0.5 shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${st.color}`}>{st.state}</span>
+                  <p className="text-sm text-gray-600">{st.desc}</p>
                 </div>
               ))}
             </div>
+            <p className="font-medium text-gray-800">Lifecycle management examples</p>
+            <Code>{`# Suspend an agent (temporarily disable)
+curl -s -X POST http://localhost:8080/api/v1/agents/<UUID>/suspend \\
+  -H "Authorization: Bearer <token>"
+# {"status": "suspended"}
+
+# Restore a suspended agent
+curl -s -X POST http://localhost:8080/api/v1/agents/<UUID>/restore \\
+  -H "Authorization: Bearer <token>"
+# {"status": "active"}
+
+# Deprecate an agent (end-of-life with migration info)
+curl -s -X POST http://localhost:8080/api/v1/agents/<UUID>/deprecate \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer <token>" \\
+  -d '{
+    "sunset_date": "2026-06-01T00:00:00Z",
+    "replacement_uri": "agent://acme.com/finance/agent_newversion"
+  }'
+# {"status": "deprecated"}
+
+# Revoke an agent (permanent, with reason)
+curl -s -X POST http://localhost:8080/api/v1/agents/<UUID>/revoke \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer <token>" \\
+  -d '{"reason": "compromised credentials"}'`}</Code>
+          </Section>
+
+          {/* Endpoint Requirements */}
+          <Section title="Endpoint Requirements" {...s("endpoint-reqs")}>
+            <p>
+              Your agent endpoint is the URL the registry monitors and that other agents call.
+              Here is what it must support to work correctly with NAP.
+            </p>
+
+            <div className="space-y-3">
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <p className="font-semibold text-gray-900 mb-1">Health probes</p>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  The registry probes your endpoint every <strong>5 minutes</strong>. It sends a{" "}
+                  <code className="font-mono">HEAD</code> request first; if that fails or returns non-2xx, it retries
+                  with <code className="font-mono">GET</code>. The probe has a <strong>10-second timeout</strong>.
+                  Return any <strong>2xx</strong> status to pass. After 3 consecutive failures your agent is marked <em>degraded</em>.
+                </p>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <p className="font-semibold text-gray-900 mb-1">HTTPS required</p>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  Production endpoints must use HTTPS. The only exception is <code className="font-mono">localhost</code> / <code className="font-mono">127.0.0.1</code> for
+                  local development (and the threat scorer flags non-HTTPS endpoints).
+                </p>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <p className="font-semibold text-gray-900 mb-1">Response format</p>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  Return JSON responses with <code className="font-mono">Content-Type: application/json</code>.
+                  There is no strict schema for your agent's own API — the registry only cares that the endpoint is reachable
+                  and returns 2xx for health probes.
+                </p>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <p className="font-semibold text-gray-900 mb-1">A2A discovery (recommended)</p>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  Serve your NAP-certified agent card at <code className="font-mono">/.well-known/agent.json</code> on
+                  your domain. This lets A2A-compatible clients discover your agent directly. The card JSON is returned
+                  in the activation response.
+                </p>
+              </div>
+            </div>
+
+            <p className="font-medium text-gray-800">Minimal endpoint — Go</p>
+            <Code>{`package main
+
+import (
+    "encoding/json"
+    "net/http"
+)
+
+func main() {
+    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        // Passes HEAD and GET health probes
+        json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+    })
+    http.HandleFunc("/.well-known/agent.json", func(w http.ResponseWriter, r *http.Request) {
+        http.ServeFile(w, r, "agent-card.json")
+    })
+    http.ListenAndServeTLS(":443", "cert.pem", "key.pem", nil)
+}`}</Code>
+            <p className="font-medium text-gray-800">Minimal endpoint — Node.js</p>
+            <Code>{`import express from "express";
+import fs from "fs";
+
+const app = express();
+
+// Passes HEAD and GET health probes
+app.get("/", (_req, res) => res.json({ status: "ok" }));
+app.head("/", (_req, res) => res.sendStatus(200));
+
+// Serve A2A agent card
+app.get("/.well-known/agent.json", (_req, res) => {
+  res.type("json").send(fs.readFileSync("agent-card.json"));
+});
+
+app.listen(3000);`}</Code>
           </Section>
 
           {/* Trust Tiers */}
@@ -510,6 +625,105 @@ _nexus-challenge.acme.com.  IN  TXT  "nexus-verify=abc123xyz..."`}</Code>
             </div>
             <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3 text-amber-800 text-xs">
               Challenges expire after <strong>15 minutes</strong>. If verification times out, start a new challenge.
+            </div>
+          </Section>
+
+          {/* Connecting to Other Agents */}
+          <Section title="Connecting to Other Agents" {...s("connecting-agents")}>
+            <p>
+              The core pattern is <strong>resolve → authenticate → call</strong>. Given an{" "}
+              <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-nexus-500">agent://</code> URI,
+              resolve it to a live endpoint, then call the endpoint directly.
+            </p>
+
+            <p className="font-medium text-gray-800">1 — Resolve a single URI</p>
+            <Code>{`# Resolve an agent URI to its live endpoint
+curl -s "http://localhost:8080/api/v1/resolve?trust_root=acme.com&capability_node=finance&agent_id=agent_7x2v9q"
+
+# Response:
+{
+  "id":          "550e8400-...",
+  "uri":         "agent://acme.com/finance/agent_7x2v9q",
+  "endpoint":    "https://agents.acme.com/tax",
+  "status":      "active",
+  "cert_serial": "3f9a..."
+}`}</Code>
+            <p className="font-medium text-gray-800">Go SDK — resolve and call</p>
+            <Code>{`c, _ := client.New("https://registry.nexusagentprotocol.com")
+
+// Manual resolve then call
+result, _ := c.Resolve(ctx, "agent://acme.com/finance/agent_7x2v9q")
+// result.Endpoint → "https://agents.acme.com/tax"
+
+// One-liner: auto-resolve + auto-auth + call
+var resp TaxResponse
+err := c.CallAgent(ctx,
+    "agent://acme.com/finance/agent_7x2v9q",
+    "POST", "/calculate",
+    &TaxRequest{Income: 100000, Year: 2026},
+    &resp,
+)
+// resp is populated with the agent's JSON response`}</Code>
+
+            <p className="font-medium text-gray-800">2 — Batch resolve (up to 100 URIs)</p>
+            <Code>{`# Resolve multiple URIs in one call
+curl -s -X POST http://localhost:8080/api/v1/resolve/batch \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "uris": [
+      "agent://acme.com/finance/agent_7x2v9q",
+      "agent://globex.com/support/agent_abc123"
+    ]
+  }'
+
+# Response:
+{
+  "results": [
+    { "uri": "agent://acme.com/finance/agent_7x2v9q",      "endpoint": "https://agents.acme.com/tax",    "status": "active" },
+    { "uri": "agent://globex.com/support/agent_abc123",     "endpoint": "https://agents.globex.com/help", "status": "active" }
+  ],
+  "count": 2
+}`}</Code>
+            <p className="font-medium text-gray-800">Go SDK — batch resolve</p>
+            <Code>{`results, err := c.ResolveBatch(ctx, []string{
+    "agent://acme.com/finance/agent_7x2v9q",
+    "agent://globex.com/support/agent_abc123",
+})
+for _, r := range results {
+    fmt.Printf("%s → %s (%s)\\n", r.URI, r.Endpoint, r.Status)
+}`}</Code>
+
+            <p className="font-medium text-gray-800">3 — Handle deprecated agents</p>
+            <p>
+              Deprecated agents still resolve, but the response includes headers signaling migration.
+              Check these headers when calling resolved endpoints:
+            </p>
+            <Code>{`# Resolve response headers for a deprecated agent:
+#   X-NAP-Deprecated: true
+#   Sunset: Mon, 01 Jun 2026 00:00:00 GMT
+#   X-NAP-Replacement: agent://acme.com/finance/agent_newversion
+
+# In your code, check for the deprecation header:
+if resp.Header.Get("X-NAP-Deprecated") == "true" {
+    sunset := resp.Header.Get("Sunset")
+    replacement := resp.Header.Get("X-NAP-Replacement")
+    log.Printf("Agent deprecated, sunset: %s, migrate to: %s", sunset, replacement)
+}`}</Code>
+
+            <p className="font-medium text-gray-800">4 — Discover agents by org or capability</p>
+            <Code>{`# List agents for an organization
+curl -s "http://localhost:8080/api/v1/agents?trust_root=acme.com"
+
+# Search by capability (prefix match — "finance" finds finance>accounting>*)
+curl -s "http://localhost:8080/api/v1/agents?capability_node=finance"
+
+# Combine filters
+curl -s "http://localhost:8080/api/v1/agents?trust_root=acme.com&capability_node=finance&limit=10"`}</Code>
+
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-blue-800 text-xs">
+              <strong>Caching tip:</strong> Use{" "}
+              <code className="font-mono">client.WithCacheTTL(5 * time.Minute)</code> when creating the Go SDK
+              client to cache resolve results and reduce registry round-trips.
             </div>
           </Section>
 
@@ -779,6 +993,181 @@ jwt decode <nap:endorsement value>
             </div>
           </Section>
 
+          {/* Webhooks */}
+          <Section title="Webhooks" {...s("webhooks")}>
+            <p>
+              Subscribe to real-time event notifications via HTTP callbacks.
+              The registry will POST a JSON payload to your URL whenever a subscribed event fires.
+            </p>
+
+            <p className="font-medium text-gray-800">Event types</p>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {[
+                { event: "agent.registered",      desc: "A new agent was registered" },
+                { event: "agent.activated",        desc: "An agent was activated" },
+                { event: "agent.revoked",          desc: "An agent was revoked" },
+                { event: "agent.suspended",        desc: "An agent was suspended" },
+                { event: "agent.deprecated",       desc: "An agent was deprecated" },
+                { event: "agent.health_degraded",  desc: "An agent's endpoint became unreachable" },
+              ].map((e) => (
+                <div key={e.event} className="rounded-lg border border-gray-200 bg-white p-3">
+                  <code className="text-xs font-mono text-nexus-500">{e.event}</code>
+                  <p className="text-xs text-gray-500 mt-1">{e.desc}</p>
+                </div>
+              ))}
+            </div>
+
+            <p className="font-medium text-gray-800">Create a subscription</p>
+            <Code>{`curl -s -X POST http://localhost:8080/api/v1/webhooks \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer <token>" \\
+  -d '{
+    "url": "https://example.com/nap-webhook",
+    "events": ["agent.activated", "agent.revoked", "agent.health_degraded"]
+  }'
+
+# Response (secret shown ONCE — store it securely):
+{
+  "id":     "wh_abc123",
+  "url":    "https://example.com/nap-webhook",
+  "events": ["agent.activated", "agent.revoked", "agent.health_degraded"],
+  "secret": "a1b2c3d4e5f6...64-char-hex-string..."
+}`}</Code>
+
+            <p className="font-medium text-gray-800">Payload format</p>
+            <Code>{`POST https://example.com/nap-webhook
+Content-Type: application/json
+X-NAP-Signature: sha256=abc123def456...
+
+{
+  "type":      "agent.activated",
+  "timestamp": "2026-02-24T12:00:00Z",
+  "payload": {
+    "agent_id": "550e8400-...",
+    "uri":      "agent://acme.com/finance/agent_7x2v9q"
+  }
+}`}</Code>
+
+            <p className="font-medium text-gray-800">Verify the signature — Node.js</p>
+            <Code>{`import crypto from "crypto";
+
+function verifyWebhook(body, signature, secret) {
+  const expected = "sha256=" +
+    crypto.createHmac("sha256", secret).update(body).digest("hex");
+  return crypto.timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(expected),
+  );
+}
+
+// In your handler:
+const raw = await getRawBody(req);
+const sig = req.headers["x-nap-signature"];
+if (!verifyWebhook(raw, sig, process.env.NAP_WEBHOOK_SECRET)) {
+  return res.status(401).send("invalid signature");
+}`}</Code>
+
+            <p className="font-medium text-gray-800">Verify the signature — Go</p>
+            <Code>{`import (
+    "crypto/hmac"
+    "crypto/sha256"
+    "crypto/subtle"
+    "encoding/hex"
+    "fmt"
+    "io"
+    "net/http"
+)
+
+func verifyWebhook(r *http.Request, secret string) ([]byte, error) {
+    body, _ := io.ReadAll(r.Body)
+    sig := r.Header.Get("X-NAP-Signature")
+
+    mac := hmac.New(sha256.New, []byte(secret))
+    mac.Write(body)
+    expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+    if subtle.ConstantTimeCompare([]byte(sig), []byte(expected)) != 1 {
+        return nil, fmt.Errorf("invalid signature")
+    }
+    return body, nil
+}`}</Code>
+
+            <p className="font-medium text-gray-800">Manage subscriptions</p>
+            <Code>{`# List your subscriptions
+curl -s http://localhost:8080/api/v1/webhooks \\
+  -H "Authorization: Bearer <token>"
+
+# Delete a subscription
+curl -s -X DELETE http://localhost:8080/api/v1/webhooks/wh_abc123 \\
+  -H "Authorization: Bearer <token>"`}</Code>
+
+            <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3 text-amber-800 text-xs">
+              <strong>Delivery guarantees:</strong> The registry retries failed deliveries up to 3 times with
+              exponential backoff (1s, 5s, 25s). Your endpoint must return a 2xx status within 10 seconds
+              to be considered successful.
+            </div>
+          </Section>
+
+          {/* Health Monitoring */}
+          <Section title="Health Monitoring" {...s("health-monitoring")}>
+            <p>
+              The registry continuously monitors every active agent's endpoint to ensure it remains reachable.
+            </p>
+
+            <div className="space-y-3">
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <p className="font-semibold text-gray-900 mb-1">Probe mechanics</p>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  Every <strong>5 minutes</strong>, the health checker sends a <code className="font-mono">HEAD</code> request
+                  to your endpoint. If that fails or returns non-2xx, it retries with <code className="font-mono">GET</code>.
+                  Both have a <strong>10-second timeout</strong>. Up to 10 agents are probed concurrently.
+                </p>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <p className="font-semibold text-gray-900 mb-1">Status transitions</p>
+                <div className="space-y-2 text-xs text-gray-600">
+                  <div className="flex items-start gap-2">
+                    <span className="shrink-0 rounded bg-green-100 text-green-700 px-2 py-0.5 font-semibold">healthy</span>
+                    <span>Endpoint returns 2xx. This is the default state after activation.</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="shrink-0 rounded bg-red-100 text-red-700 px-2 py-0.5 font-semibold">degraded</span>
+                    <span>3 consecutive probe failures. A <code className="font-mono">agent.health_degraded</code> webhook event is fired.</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="shrink-0 rounded bg-blue-100 text-blue-700 px-2 py-0.5 font-semibold">recovered</span>
+                    <span>A previously degraded agent passes a probe. Status returns to <em>healthy</em> automatically.</span>
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <p className="font-semibold text-gray-900 mb-1">Health fields on agent objects</p>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  Agent responses include <code className="font-mono">health_status</code> (healthy/degraded) and{" "}
+                  <code className="font-mono">last_seen_at</code> (ISO timestamp of last successful probe).
+                </p>
+              </div>
+            </div>
+
+            <p className="font-medium text-gray-800">Troubleshooting</p>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-700 space-y-1">
+              <p>If your agent is marked <em>degraded</em>, check:</p>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Your endpoint returns 2xx for HEAD or GET requests to the root path</li>
+                <li>Your endpoint responds within 10 seconds</li>
+                <li>Your TLS certificate is valid and not expired</li>
+                <li>No firewall rules are blocking the registry's IP</li>
+                <li>Your endpoint URL in the registry matches the actual deployment</li>
+              </ul>
+            </div>
+
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-blue-800 text-xs">
+              <strong>Get notified:</strong> Subscribe to the <code className="font-mono">agent.health_degraded</code>{" "}
+              webhook event to receive immediate alerts when your agent becomes unreachable.
+              See the <a href="#webhooks" className="underline">Webhooks section</a> for setup instructions.
+            </div>
+          </Section>
+
           {/* API Reference */}
           <Section title="API Reference" {...s("api-reference")}>
             <p className="font-semibold text-gray-800">User Auth</p>
@@ -800,7 +1189,11 @@ jwt decode <nap:endorsement value>
               <Endpoint method="POST"   path="/api/v1/agents/:id/activate" description="Activate an agent after verification. Returns X.509 cert (domain agents), NAP endorsement JWT, agent_card_json with skills, and mcp_manifest_json if MCP tools were declared." />
               <Endpoint method="GET"    path="/api/v1/agents/:id/agent.json"       description="Fetch the A2A-spec agent card for a single agent. Includes skills array populated from declared skills or capability taxonomy. No auth required." />
               <Endpoint method="GET"    path="/api/v1/agents/:id/mcp-manifest.json" description="Fetch the MCP tool manifest for a single agent. Returns 404 if no mcp_tools were declared at registration. No auth required." />
-              <Endpoint method="POST"   path="/api/v1/agents/:id/revoke"   description="Revoke an agent's registration." auth />
+              <Endpoint method="POST"   path="/api/v1/agents/:id/revoke"     description='Revoke an agent permanently. Optional body: {"reason":"..."}. Agent is added to CRL.' auth />
+              <Endpoint method="POST"   path="/api/v1/agents/:id/suspend"   description="Temporarily suspend an agent. Restorable via /restore." auth />
+              <Endpoint method="POST"   path="/api/v1/agents/:id/restore"   description="Restore a suspended agent to active status." auth />
+              <Endpoint method="POST"   path="/api/v1/agents/:id/deprecate" description='Mark agent end-of-life. Optional body: {"sunset_date":"...","replacement_uri":"agent://..."}.' auth />
+              <Endpoint method="POST"   path="/api/v1/agents/:id/report-abuse" description="Submit an abuse report for an agent." />
               <Endpoint method="DELETE" path="/api/v1/agents/:id"          description="Permanently delete an agent. Must be the owning agent or carry nexus:admin scope." auth />
             </div>
 
@@ -809,6 +1202,8 @@ jwt decode <nap:endorsement value>
               <Endpoint method="GET" path="/api/v1/resolve"                   description="Resolve an agent URI. Query params: trust_root, capability_node, agent_id. Returns endpoint, uri, status, and cert_serial." />
               <Endpoint method="GET" path="/.well-known/agent-card.json"      description="NAP discovery card for a domain (backward-compatible format). Query param: domain=acme.com. Returns all active agents with nap:trust_tier per entry." />
               <Endpoint method="GET" path="/.well-known/agent.json"           description="A2A-spec discovery card for a domain. Query param: domain=acme.com. Returns the first active agent in standard A2A format with skills and nap:* extension fields." />
+              <Endpoint method="POST" path="/api/v1/resolve/batch"          description="Resolve up to 100 agent URIs in a single request. Body: {uris:[...]}. Returns results with endpoint, status, and any errors." />
+              <Endpoint method="GET"  path="/api/v1/crl"                    description="Certificate Revocation List. Returns all revoked certs with serial, reason, and timestamp." />
             </div>
 
             <p className="font-semibold text-gray-800 pt-2">DNS Verification</p>
@@ -831,9 +1226,23 @@ jwt decode <nap:endorsement value>
               <Endpoint method="GET" path="/.well-known/jwks.json"            description="JWKS endpoint — use to verify NAP endorsement JWTs and task tokens." />
             </div>
 
-            <p className="font-semibold text-gray-800 pt-2">Health</p>
+            <p className="font-semibold text-gray-800 pt-2">Webhooks</p>
             <div className="space-y-2">
-              <Endpoint method="GET" path="/healthz" description='Returns {"status":"ok"} when the registry is up and connected to Postgres.' />
+              <Endpoint method="POST"   path="/api/v1/webhooks"     description="Create a webhook subscription. Body: {url, events[]}. Returns subscription with HMAC secret (shown once)." auth />
+              <Endpoint method="GET"    path="/api/v1/webhooks"     description="List your webhook subscriptions." auth />
+              <Endpoint method="DELETE" path="/api/v1/webhooks/:id" description="Delete a webhook subscription." auth />
+            </div>
+
+            <p className="font-semibold text-gray-800 pt-2">Admin</p>
+            <div className="space-y-2">
+              <Endpoint method="GET"   path="/api/v1/admin/abuse-reports"     description="List all abuse reports." auth badge={{ label: "admin", className: "bg-red-100 text-red-700" }} />
+              <Endpoint method="PATCH" path="/api/v1/admin/abuse-reports/:id" description="Update an abuse report status." auth badge={{ label: "admin", className: "bg-red-100 text-red-700" }} />
+            </div>
+
+            <p className="font-semibold text-gray-800 pt-2">Monitoring</p>
+            <div className="space-y-2">
+              <Endpoint method="GET" path="/healthz"  description='Returns {"status":"ok"} when the registry is up and connected to Postgres.' />
+              <Endpoint method="GET" path="/metrics"   description="Prometheus-format metrics endpoint for monitoring registry operations." />
             </div>
           </Section>
 
@@ -898,6 +1307,97 @@ curl -s -X POST http://localhost:8080/api/v1/agents/<UUID>/revoke \\
             <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-blue-800 text-xs">
               Task token TTL defaults to <strong>1 hour</strong>. User JWT TTL is <strong>24 hours</strong>.
               NAP Endorsement JWTs in agent cards are valid for <strong>1 year</strong> and should be refreshed at re-activation.
+            </div>
+          </Section>
+
+          {/* Agent-to-Agent mTLS */}
+          <Section title="Agent-to-Agent mTLS" {...s("mtls")}>
+            <p>
+              Domain-verified agents receive an X.509 certificate at activation, enabling mutual TLS
+              authentication between agents. NAP-hosted agents use Bearer tokens instead.
+            </p>
+
+            <p className="font-medium text-gray-800">What you receive at activation</p>
+            <div className="space-y-3">
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <p className="font-semibold text-gray-900 mb-1">certificate.pem</p>
+                <p className="text-xs text-gray-500">Your agent's X.509 certificate signed by the Nexus CA. Contains your agent:// URI as a SAN (Subject Alternative Name).</p>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <p className="font-semibold text-gray-900 mb-1">private_key_pem</p>
+                <p className="text-xs text-gray-500">RSA private key. Delivered once — the registry never stores it. Keep this secure.</p>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <p className="font-semibold text-gray-900 mb-1">ca_pem</p>
+                <p className="text-xs text-gray-500">The Nexus CA certificate. Use this as the trusted root when verifying other agents' certificates.</p>
+              </div>
+            </div>
+
+            <p className="font-medium text-gray-800">Go SDK — mTLS client</p>
+            <Code>{`// Create a client that authenticates via mTLS
+c, err := client.New("https://registry.nexusagentprotocol.com",
+    client.WithMTLS(certPEM, keyPEM, caPEM),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Exchange mTLS cert for a JWT (useful for calling non-mTLS endpoints)
+token, err := c.FetchToken(ctx)
+// token is a short-lived RS256 JWT with your agent_uri in the claims`}</Code>
+
+            <p className="font-medium text-gray-800">Configure your server to accept mTLS</p>
+            <Code>{`import (
+    "crypto/tls"
+    "crypto/x509"
+    "net/http"
+    "os"
+)
+
+caCert, _ := os.ReadFile("nexus-ca.pem")
+pool := x509.NewCertPool()
+pool.AppendCertsFromPEM(caCert)
+
+server := &http.Server{
+    Addr: ":8443",
+    TLSConfig: &tls.Config{
+        ClientCAs:  pool,
+        ClientAuth: tls.RequireAndVerifyClientCert,
+    },
+}
+server.ListenAndServeTLS("server-cert.pem", "server-key.pem")`}</Code>
+
+            <p className="font-medium text-gray-800">Extract caller identity from the peer certificate</p>
+            <Code>{`func agentURIFromRequest(r *http.Request) string {
+    if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+        return ""
+    }
+    for _, uri := range r.TLS.PeerCertificates[0].URIs {
+        if uri.Scheme == "agent" {
+            return uri.String() // e.g. "agent://acme.com/finance/agent_7x2v9q"
+        }
+    }
+    return ""
+}`}</Code>
+
+            <p className="font-medium text-gray-800">Check the Certificate Revocation List</p>
+            <Code>{`# Fetch the CRL
+curl -s http://localhost:8080/api/v1/crl
+# {
+#   "entries": [{"cert_serial":"3f9a...","reason":"compromised","revoked_at":"2026-02-24T..."}],
+#   "count": 1,
+#   "generated_at": "2026-02-24T12:00:00Z"
+# }
+
+# Go SDK
+crl, err := c.GetCRL(ctx)
+for _, entry := range crl.Entries {
+    fmt.Printf("Revoked: serial=%s reason=%s\\n", entry.CertSerial, entry.Reason)
+}`}</Code>
+
+            <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3 text-amber-800 text-xs">
+              <strong>NAP-hosted agents</strong> do not receive X.509 certificates. They authenticate
+              using Bearer tokens (User JWT or Task Token) instead of mTLS.
             </div>
           </Section>
 
@@ -969,6 +1469,102 @@ fmt.Println(len(manifest.Tools))    // number of declared tools`}</Code>
 c, err := client.New("https://registry.nexusagentprotocol.com",
     client.WithBearerToken(taskToken),
 )`}</Code>
+          </Section>
+
+          {/* TypeScript SDK */}
+          <Section title="TypeScript SDK" {...s("sdk-typescript")}>
+            <p>
+              The <code className="font-mono rounded bg-gray-100 px-1">@openclaw/nap</code> package provides
+              a TypeScript client for NAP, designed for Node.js 22+ agents and gateway integrations.
+            </p>
+            <Code>{`npm install @openclaw/nap`}</Code>
+
+            <p className="font-medium text-gray-800">NAPClient — REST wrapper</p>
+            <Code>{`import { NAPClient } from "@openclaw/nap";
+
+const nap = new NAPClient("https://registry.nexusagentprotocol.com");
+
+// Sign up and log in
+const auth = await nap.signup("you@example.com", "hunter2", "Alice");
+const { token } = await nap.login("you@example.com", "hunter2");
+
+// Register a NAP-hosted agent
+const reg = await nap.registerHosted(
+  token,
+  "My Assistant",
+  "https://api.example.com/assistant",
+  "Answers product questions",
+);
+console.log(reg.agent_uri); // agent://nap/assistant/agent_xxx
+
+// Register a domain-verified agent
+const domReg = await nap.registerDomain(
+  "acme.com",
+  "finance>accounting",
+  "Acme Tax Agent",
+  "https://agents.acme.com/tax",
+  "Handles tax filing queries",
+);
+
+// Activate
+const activation = await nap.activate(reg.id, token);
+console.log(activation.agent_card_json); // Deploy at /.well-known/agent.json`}</Code>
+
+            <p className="font-medium text-gray-800">Gateway integration</p>
+            <p>
+              For agents built with Express, Fastify, or any Node.js HTTP server, the gateway helpers
+              handle NAP registration at startup, serve the A2A agent card, and keep the endpoint in sync.
+            </p>
+            <Code>{`import { napStartupHook, createAgentCardHandler, startNAPSync } from "@openclaw/nap";
+
+// 1. Register/activate on boot
+const state = await napStartupHook(config, "https://my-agent.example.com");
+
+// 2. Serve /.well-known/agent.json (works with any Node HTTP server)
+const cardHandler = createAgentCardHandler(state);
+// In your request handler:
+if (!cardHandler(req, res)) {
+  // Not a /.well-known/agent.json request — handle normally
+}
+
+// 3. Periodic endpoint sync (default: every 1 hour)
+const stopSync = startNAPSync(
+  config,
+  () => "https://my-agent.example.com",
+  (newState) => { /* update your local state */ },
+);
+// Call stopSync() on shutdown`}</Code>
+
+            <p className="font-medium text-gray-800">Configuration</p>
+            <Code>{`// NAPConfig — pass to napStartupHook and startNAPSync
+{
+  enabled: true,                     // required; false = NAP disabled
+  display_name: "My Agent",          // required
+  registry_url: "https://...",       // optional; defaults to production registry
+  description: "What this agent does",
+  endpoint: "https://my-agent.example.com",
+  owner_domain: "example.com",      // if set → domain-verified; omit → nap_hosted
+  capability: "finance>accounting",  // capability taxonomy path
+}`}</Code>
+
+            <p className="font-medium text-gray-800">State management</p>
+            <p>
+              The SDK persists agent state to <code className="font-mono rounded bg-gray-100 px-1">~/.openclaw/nap.json</code>{" "}
+              (mode 0600). This includes agent ID, URI, tokens, and sync timestamps. The gateway helpers
+              read and update this file automatically.
+            </p>
+
+            <p className="font-medium text-gray-800">Interactive onboarding</p>
+            <Code>{`import { onboardWizard } from "@openclaw/nap";
+
+// Interactive CLI wizard — prompts for email, password, agent details
+// Handles signup/login, registration, and activation in one flow
+await onboardWizard();`}</Code>
+
+            <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3 text-amber-800 text-xs">
+              <strong>Requirements:</strong> Node.js 22+ (uses native <code className="font-mono">fetch</code> and{" "}
+              <code className="font-mono">readline/promises</code>). No polyfills needed.
+            </div>
           </Section>
 
         </div>
