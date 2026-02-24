@@ -15,9 +15,11 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/email"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/federation"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/health"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/identity"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/handler"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/repository"
@@ -25,6 +27,7 @@ import (
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/threat"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/trustledger"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/users"
+	"github.com/jmerrifield20/NexusAgentProtocol/internal/webhooks"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
@@ -72,6 +75,9 @@ func run(logger *zap.Logger) error {
 	viper.SetDefault("federation.intermediate_ca_key", "")
 	viper.SetDefault("federation.dns_discovery_enabled", true)
 	viper.SetDefault("federation.remote_resolve_timeout", "5s")
+	viper.SetDefault("health.check_interval", "5m")
+	viper.SetDefault("health.probe_timeout", "10s")
+	viper.SetDefault("health.fail_threshold", 3)
 
 	if err := viper.ReadInConfig(); err != nil {
 		var cfgNotFound viper.ConfigFileNotFoundError
@@ -214,6 +220,7 @@ func run(logger *zap.Logger) error {
 		keyPath := viper.GetString("federation.intermediate_ca_key")
 		rootURL := viper.GetString("federation.root_registry_url")
 
+		var intermediateCert *x509.Certificate
 		if certPath != "" && keyPath != "" {
 			certPEM, certErr := os.ReadFile(certPath)
 			keyPEM, keyErr := os.ReadFile(keyPath)
@@ -223,12 +230,13 @@ func run(logger *zap.Logger) error {
 					zap.String("key_path", keyPath),
 				)
 			} else {
-				intermediateCert, intermediateKey, parseErr := identity.LoadCertAndKey(certPEM, keyPEM)
+				parsedCert, intermediateKey, parseErr := identity.LoadCertAndKey(certPEM, keyPEM)
 				if parseErr != nil {
 					logger.Warn("federated mode: cannot parse intermediate CA; falling back to local CA",
 						zap.Error(parseErr),
 					)
 				} else {
+					intermediateCert = parsedCert
 					// Fetch root CA pool from the configured root registry.
 					var rootCAPool *x509.CertPool
 					if rootURL != "" {
@@ -252,8 +260,21 @@ func run(logger *zap.Logger) error {
 		}
 
 		fedRepo := federation.NewFederationRepository(db, logger)
-		fedSvc := federation.NewFederationService(fedRepo, nil, logger) // nil issuer: cannot issue sub-CAs
-		fedHandler = handler.NewFederationHandler(fedSvc, role, userTokens, logger)
+
+		// Sub-delegation auto-detection: if the intermediate cert has MaxPathLen > 0,
+		// this registry can issue sub-intermediates (e.g. Korea issuing to ministries).
+		var fedIssuer *identity.Issuer
+		fedRole := role // default: federated
+		if intermediateCert != nil && intermediateCert.MaxPathLen > 0 {
+			fedIssuer = issuer // the intermediate-mode issuer can sign sub-CAs
+			fedRole = federation.RoleRoot
+			logger.Info("sub-delegation enabled — intermediate CA has MaxPathLen > 0",
+				zap.Int("max_path_len", intermediateCert.MaxPathLen),
+			)
+		}
+
+		fedSvc := federation.NewFederationService(fedRepo, fedIssuer, logger)
+		fedHandler = handler.NewFederationHandler(fedSvc, fedRole, userTokens, logger)
 		resolver := federation.NewRemoteResolver(nil, rootURL, dnsFedEnabled, resolveTimeout, logger)
 		svc.SetRemoteResolver(resolver)
 		logger.Info("federation role: federated")
@@ -274,6 +295,20 @@ func run(logger *zap.Logger) error {
 	authHandler.SetAdminSecret(viper.GetString("registry.admin_secret"))
 	userProfileHandler := handler.NewUserHandler(userSvc, svc, logger)
 	userProfileHandler.SetUserTokenIssuer(userTokens)
+
+	// Abuse reporting
+	abuseRepo := repository.NewAbuseReportRepository(db)
+	abuseHandler := handler.NewAbuseHandler(abuseRepo, userTokens, logger)
+
+	// Webhook events
+	webhookRepo := webhooks.NewRepository(db)
+	webhookSvc := webhooks.NewService(webhookRepo, logger)
+	webhookSvc.SetMetricsRecorder(handler.RecordWebhookDelivery)
+	webhookHandler := webhooks.NewHandler(webhookSvc, userTokens, logger)
+	svc.SetWebhookDispatcher(webhookSvc)
+
+	// Wire metrics recording for ledger appends.
+	service.SetLedgerAppendMetrics(handler.RecordLedgerAppend)
 
 	// ── HTTP Router ───────────────────────────────────────────────────────────
 	if os.Getenv("GIN_MODE") == "" {
@@ -315,12 +350,16 @@ func run(logger *zap.Logger) error {
 		router.Use(handler.RateLimiter(rps, rps*2))
 	}
 
+	router.Use(handler.PrometheusMiddleware())
 	router.Use(requestLogger(logger))
 
 	// Health (public, no auth)
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+
+	// Prometheus metrics (public)
+	router.GET("/metrics", handler.MetricsHandler())
 
 	// OIDC well-known endpoints (public)
 	oidcProvider.RegisterWellKnown(router)
@@ -337,6 +376,8 @@ func run(logger *zap.Logger) error {
 	dnsHandler.Register(v1)
 	authHandler.Register(v1)
 	userProfileHandler.Register(v1)
+	abuseHandler.Register(v1)
+	webhookHandler.Register(v1)
 	if fedHandler != nil {
 		fedHandler.Register(v1)
 	}
@@ -365,6 +406,22 @@ func run(logger *zap.Logger) error {
 			}
 		}
 	}()
+
+	// ── Background: health checker ──────────────────────────────────────────
+	healthCheckInterval, _ := time.ParseDuration(viper.GetString("health.check_interval"))
+	healthProbeTimeout, _ := time.ParseDuration(viper.GetString("health.probe_timeout"))
+	healthCfg := health.Config{
+		CheckInterval: healthCheckInterval,
+		ProbeTimeout:  healthProbeTimeout,
+		FailThreshold: viper.GetInt("health.fail_threshold"),
+	}
+	healthAdapter := &healthServiceAdapter{svc: svc}
+	checker := health.New(healthAdapter, healthAdapter, healthCfg, logger)
+	checker.SetMetricsRecord(handler.RecordHealthCheck)
+	checker.SetWebhookDispatch(func(ctx context.Context, eventType string, payload map[string]string) {
+		webhookSvc.Dispatch(ctx, eventType, payload)
+	})
+	go checker.Start(quit)
 
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", httpPort),
@@ -438,6 +495,32 @@ func containsWildcard(origins []string) bool {
 		}
 	}
 	return false
+}
+
+// healthServiceAdapter bridges the AgentService to the health.endpointLister
+// and health.statusUpdater interfaces.
+type healthServiceAdapter struct {
+	svc *service.AgentService
+}
+
+func (a *healthServiceAdapter) ListActiveEndpoints(ctx context.Context) ([]health.EndpointAgent, error) {
+	agents, err := a.svc.ListActiveEndpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]health.EndpointAgent, len(agents))
+	for i, ag := range agents {
+		out[i] = health.EndpointAgent{
+			ID:       ag.ID,
+			URI:      ag.URI(),
+			Endpoint: ag.Endpoint,
+		}
+	}
+	return out, nil
+}
+
+func (a *healthServiceAdapter) UpdateHealthStatus(ctx context.Context, id uuid.UUID, status string, lastSeenAt time.Time) error {
+	return a.svc.UpdateHealthStatus(ctx, id, status, lastSeenAt)
 }
 
 // requestLogger returns a Gin middleware that logs each request with zap.

@@ -18,6 +18,7 @@ type federationSvc interface {
 	Suspend(ctx context.Context, id uuid.UUID) (*federation.RegisteredRegistry, error)
 	List(ctx context.Context, status federation.RegistryStatus, limit, offset int) ([]*federation.RegisteredRegistry, error)
 	IssueIntermediateCA(ctx context.Context, trustRoot string) (*federation.IssueCAResponse, error)
+	UpdateMaxPathLen(ctx context.Context, id uuid.UUID, maxPathLen int) error
 }
 
 // FederationHandler handles HTTP requests for the registry-of-registries API.
@@ -53,6 +54,7 @@ func (h *FederationHandler) Register(rg *gin.RouterGroup) {
 		fed.POST("/issue-ca", h.IssueCA)
 		fed.POST("/registries/:id/approve", h.ApproveRegistry)
 		fed.POST("/registries/:id/suspend", h.SuspendRegistry)
+		fed.PATCH("/registries/:id/delegation", h.UpdateDelegation)
 	}
 }
 
@@ -141,4 +143,29 @@ func (h *FederationHandler) SuspendRegistry(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, reg)
+}
+
+// UpdateDelegation handles PATCH /api/v1/federation/registries/:id/delegation (root only).
+// It updates the sub-delegation depth (max_path_len) for a registered registry.
+// The new value takes effect on the next CA re-issuance.
+func (h *FederationHandler) UpdateDelegation(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid registry id"})
+		return
+	}
+
+	var req federation.UpdateDelegationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		return
+	}
+
+	if err := h.svc.UpdateMaxPathLen(c.Request.Context(), id, req.MaxPathLen); err != nil {
+		h.logger.Error("update delegation", zap.String("id", id.String()), zap.Error(err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"id": id.String(), "max_path_len": req.MaxPathLen})
 }

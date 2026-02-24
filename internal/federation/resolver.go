@@ -23,6 +23,10 @@ type RemoteResolver struct {
 	dnsEnabled      bool
 	timeout         time.Duration
 	logger          *zap.Logger
+
+	// dnsDiscoverFn is the DNS discovery function. Defaults to dnsDiscover.
+	// Tests can override this to avoid real DNS lookups.
+	dnsDiscoverFn func(trustRoot string) (string, bool)
 }
 
 // NewRemoteResolver creates a RemoteResolver.
@@ -37,13 +41,15 @@ func NewRemoteResolver(
 	if timeout == 0 {
 		timeout = 5 * time.Second
 	}
-	return &RemoteResolver{
+	rr := &RemoteResolver{
 		fedSvc:          fedSvc,
 		rootRegistryURL: rootRegistryURL,
 		dnsEnabled:      dnsEnabled,
 		timeout:         timeout,
 		logger:          logger,
 	}
+	rr.dnsDiscoverFn = rr.dnsDiscover
+	return rr
 }
 
 // Resolve attempts to find an agent on a remote registry.
@@ -96,8 +102,23 @@ func (r *RemoteResolver) discoverEndpoint(ctx context.Context, trustRoot string)
 
 	// 2. DNS TXT discovery.
 	if r.dnsEnabled {
-		if url, ok := r.dnsDiscover(trustRoot); ok {
-			return url, nil
+		if url, ok := r.dnsDiscoverFn(trustRoot); ok {
+			// When fedSvc is available (root mode), require the trust root
+			// to be approved in the federation table before accepting DNS results.
+			if r.fedSvc != nil {
+				reg, err := r.fedSvc.GetByTrustRoot(ctx, trustRoot)
+				if err != nil || reg.Status != StatusActive {
+					r.logger.Warn("DNS discovery rejected: trust root not approved",
+						zap.String("trust_root", trustRoot),
+						zap.String("dns_url", url),
+					)
+					// fall through to step 3
+				} else {
+					return url, nil
+				}
+			} else {
+				return url, nil
+			}
 		}
 	}
 

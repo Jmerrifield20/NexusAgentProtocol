@@ -258,6 +258,70 @@ func (s *stubAgentRepo) ListVerifiedDomainsByUserID(_ context.Context, ownerUser
 	return nil, nil
 }
 
+func (s *stubAgentRepo) UpdateStatusWithReason(_ context.Context, id uuid.UUID, status model.AgentStatus, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.rows[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	a.Status = status
+	a.RevocationReason = reason
+	return nil
+}
+
+func (s *stubAgentRepo) Suspend(_ context.Context, id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.rows[id]
+	if !ok || a.Status != model.AgentStatusActive {
+		return repository.ErrNotFound
+	}
+	a.Status = model.AgentStatusSuspended
+	now := time.Now()
+	a.SuspendedAt = &now
+	return nil
+}
+
+func (s *stubAgentRepo) Restore(_ context.Context, id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.rows[id]
+	if !ok || a.Status != model.AgentStatusSuspended {
+		return repository.ErrNotFound
+	}
+	a.Status = model.AgentStatusActive
+	a.SuspendedAt = nil
+	return nil
+}
+
+func (s *stubAgentRepo) ListRevokedCerts(_ context.Context) ([]*model.Agent, error) {
+	return nil, nil
+}
+
+func (s *stubAgentRepo) Deprecate(_ context.Context, id uuid.UUID, sunsetDate *time.Time, replacementURI string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.rows[id]
+	if !ok || a.Status != model.AgentStatusActive {
+		return repository.ErrNotFound
+	}
+	a.Status = model.AgentStatusDeprecated
+	now := time.Now()
+	a.DeprecatedAt = &now
+	a.SunsetDate = sunsetDate
+	a.ReplacementURI = replacementURI
+	return nil
+}
+
+func (s *stubAgentRepo) ListActiveEndpoints(_ context.Context) ([]*model.Agent, error) {
+	return nil, nil
+}
+
+func (s *stubAgentRepo) UpdateHealthStatus(_ context.Context, id uuid.UUID, status string, lastSeenAt time.Time) error {
+	return nil
+}
+
 func (s *stubAgentRepo) Search(_ context.Context, q string, limit, offset int) ([]*model.Agent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

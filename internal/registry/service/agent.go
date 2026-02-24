@@ -78,8 +78,15 @@ type agentRepo interface {
 	ListVerifiedDomainsByUserID(ctx context.Context, ownerUserID uuid.UUID) ([]string, error)
 	Update(ctx context.Context, agent *model.Agent) error
 	UpdateStatus(ctx context.Context, id uuid.UUID, status model.AgentStatus) error
+	UpdateStatusWithReason(ctx context.Context, id uuid.UUID, status model.AgentStatus, reason string) error
 	ActivateWithCert(ctx context.Context, id uuid.UUID, serial, certPEM string) error
 	Delete(ctx context.Context, id uuid.UUID) error
+	Suspend(ctx context.Context, id uuid.UUID) error
+	Restore(ctx context.Context, id uuid.UUID) error
+	ListRevokedCerts(ctx context.Context) ([]*model.Agent, error)
+	Deprecate(ctx context.Context, id uuid.UUID, sunsetDate *time.Time, replacementURI string) error
+	ListActiveEndpoints(ctx context.Context) ([]*model.Agent, error)
+	UpdateHealthStatus(ctx context.Context, id uuid.UUID, status string, lastSeenAt time.Time) error
 }
 
 // DomainVerifier checks whether a domain has completed DNS-01 verification.
@@ -100,19 +107,25 @@ type RemoteResolver interface {
 	Resolve(ctx context.Context, trustRoot, capNode, agentID string) (*model.Agent, error)
 }
 
+// WebhookDispatcher dispatches lifecycle events to webhook subscribers.
+type WebhookDispatcher interface {
+	Dispatch(ctx context.Context, eventType string, payload map[string]string)
+}
+
 // AgentService contains business logic for agent lifecycle management.
 type AgentService struct {
-	repo           agentRepo
-	issuer         *identity.Issuer      // nil = no cert issuance
-	tokens         *identity.TokenIssuer // nil = no endorsement JWT generation
-	ledger         trustledger.Ledger    // nil = no ledger writes
-	dnsVerifier    DomainVerifier        // nil = skip domain verification gate
-	emailChecker   UserEmailChecker      // nil = skip email verification gate
-	threatScorer   threat.Scorer         // nil = no threat scoring
-	remoteResolver RemoteResolver        // nil = no cross-registry resolution
-	freeTier       FreeTierConfig
-	registryURL    string // base URL of this registry, used in endorsement JWTs
-	logger         *zap.Logger
+	repo              agentRepo
+	issuer            *identity.Issuer      // nil = no cert issuance
+	tokens            *identity.TokenIssuer // nil = no endorsement JWT generation
+	ledger            trustledger.Ledger    // nil = no ledger writes
+	dnsVerifier       DomainVerifier        // nil = skip domain verification gate
+	emailChecker      UserEmailChecker      // nil = skip email verification gate
+	threatScorer      threat.Scorer         // nil = no threat scoring
+	remoteResolver    RemoteResolver        // nil = no cross-registry resolution
+	webhookDispatcher WebhookDispatcher     // nil = no webhook dispatch
+	freeTier          FreeTierConfig
+	registryURL       string // base URL of this registry, used in endorsement JWTs
+	logger            *zap.Logger
 }
 
 // NewAgentService creates a new AgentService.
@@ -161,6 +174,20 @@ func (s *AgentService) SetRemoteResolver(rr RemoteResolver) {
 	s.remoteResolver = rr
 }
 
+// SetWebhookDispatcher configures the webhook dispatcher used to fan-out
+// lifecycle events (register, activate, revoke, suspend, deprecate, etc.).
+func (s *AgentService) SetWebhookDispatcher(wd WebhookDispatcher) {
+	s.webhookDispatcher = wd
+}
+
+// dispatchWebhook dispatches a webhook event in a non-blocking manner.
+func (s *AgentService) dispatchWebhook(ctx context.Context, eventType string, payload map[string]string) {
+	if s.webhookDispatcher == nil {
+		return
+	}
+	go s.webhookDispatcher.Dispatch(ctx, eventType, payload)
+}
+
 // ScoreThreat runs the threat scorer against a registration request without
 // performing any registration. Returns nil when no scorer is configured.
 func (s *AgentService) ScoreThreat(ctx context.Context, req *model.RegisterRequest) (*threat.Report, error) {
@@ -188,6 +215,20 @@ func (s *AgentService) appendLedger(ctx context.Context, agentURI, action, actor
 			zap.Error(err),
 		)
 	}
+	// Prometheus instrumentation — fire-and-forget counter increment.
+	// Import is in the handler package; we call it via the function to avoid
+	// a circular import. This is safe because it's a no-op if metrics aren't
+	// initialised.
+	recordLedgerAppendFn()
+}
+
+// recordLedgerAppendFn is set by the main package to the metrics recorder.
+// Avoids importing the handler package from the service package.
+var recordLedgerAppendFn = func() {}
+
+// SetLedgerAppendMetrics configures the function called after each ledger append.
+func SetLedgerAppendMetrics(fn func()) {
+	recordLedgerAppendFn = fn
 }
 
 // Register creates a new agent registration in pending state.
@@ -335,6 +376,10 @@ func (s *AgentService) Register(ctx context.Context, req *model.RegisterRequest)
 		"registration_type": agent.RegistrationType,
 		"endpoint":          agent.Endpoint,
 	})
+	s.dispatchWebhook(ctx, "agent.registered", map[string]string{
+		"agent_id": agent.ID.String(),
+		"uri":      agent.URI(),
+	})
 
 	return agent, nil
 }
@@ -360,7 +405,9 @@ func (s *AgentService) Resolve(ctx context.Context, trustRoot, capNode, agentID 
 		}
 		return nil, err
 	}
-	if agent.Status != model.AgentStatusActive {
+	// Allow active and deprecated agents to be resolved; deprecated agents
+	// still respond but the handler adds Sunset/Deprecation headers.
+	if agent.Status != model.AgentStatusActive && agent.Status != model.AgentStatusDeprecated {
 		return nil, fmt.Errorf("agent is not active (status: %s)", agent.Status)
 	}
 	return agent, nil
@@ -510,26 +557,144 @@ func (s *AgentService) Activate(ctx context.Context, id uuid.UUID) (*ActivationR
 		"agent_id":    agent.AgentID,
 		"cert_serial": result.Serial,
 	})
+	s.dispatchWebhook(ctx, "agent.activated", map[string]string{
+		"agent_id": agent.ID.String(),
+		"uri":      agent.URI(),
+	})
 
 	return result, nil
 }
 
-// Revoke marks an agent as revoked.
-func (s *AgentService) Revoke(ctx context.Context, id uuid.UUID) error {
+// Revoke marks an agent as revoked with an optional reason.
+func (s *AgentService) Revoke(ctx context.Context, id uuid.UUID, reason string) error {
 	agent, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	if err := s.repo.UpdateStatus(ctx, id, model.AgentStatusRevoked); err != nil {
-		return err
+	if reason != "" {
+		if err := s.repo.UpdateStatusWithReason(ctx, id, model.AgentStatusRevoked, reason); err != nil {
+			return err
+		}
+	} else {
+		if err := s.repo.UpdateStatus(ctx, id, model.AgentStatusRevoked); err != nil {
+			return err
+		}
 	}
 
 	s.appendLedger(ctx, agent.URI(), "revoke", "nexus-system", map[string]string{
 		"agent_id": agent.AgentID,
+		"reason":   reason,
+	})
+	s.dispatchWebhook(ctx, "agent.revoked", map[string]string{
+		"agent_id": agent.ID.String(),
+		"uri":      agent.URI(),
+		"reason":   reason,
 	})
 
 	return nil
+}
+
+// Suspend temporarily disables an active agent.
+func (s *AgentService) Suspend(ctx context.Context, id uuid.UUID) error {
+	agent, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if agent.Status != model.AgentStatusActive {
+		return fmt.Errorf("only active agents can be suspended (current status: %s)", agent.Status)
+	}
+
+	if err := s.repo.Suspend(ctx, id); err != nil {
+		return err
+	}
+
+	s.appendLedger(ctx, agent.URI(), "suspend", "nexus-system", map[string]string{
+		"agent_id": agent.AgentID,
+	})
+	s.dispatchWebhook(ctx, "agent.suspended", map[string]string{
+		"agent_id": agent.ID.String(),
+		"uri":      agent.URI(),
+	})
+
+	return nil
+}
+
+// Restore re-activates a suspended agent.
+func (s *AgentService) Restore(ctx context.Context, id uuid.UUID) error {
+	agent, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if agent.Status != model.AgentStatusSuspended {
+		return fmt.Errorf("only suspended agents can be restored (current status: %s)", agent.Status)
+	}
+
+	if err := s.repo.Restore(ctx, id); err != nil {
+		return err
+	}
+
+	s.appendLedger(ctx, agent.URI(), "restore", "nexus-system", map[string]string{
+		"agent_id": agent.AgentID,
+	})
+
+	return nil
+}
+
+// ListRevokedCerts returns all agents with revoked certificates (for CRL generation).
+func (s *AgentService) ListRevokedCerts(ctx context.Context) ([]*model.Agent, error) {
+	return s.repo.ListRevokedCerts(ctx)
+}
+
+// Deprecate marks an active agent as deprecated with optional sunset metadata.
+func (s *AgentService) Deprecate(ctx context.Context, id uuid.UUID, req *model.DeprecateRequest) error {
+	agent, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if agent.Status != model.AgentStatusActive {
+		return fmt.Errorf("only active agents can be deprecated (current status: %s)", agent.Status)
+	}
+
+	var sunsetDate *time.Time
+	if req != nil && req.SunsetDate != "" {
+		t, err := time.Parse("2006-01-02", req.SunsetDate)
+		if err != nil {
+			return fmt.Errorf("invalid sunset_date format (use YYYY-MM-DD): %w", err)
+		}
+		sunsetDate = &t
+	}
+
+	replacementURI := ""
+	if req != nil {
+		replacementURI = req.ReplacementURI
+	}
+
+	if err := s.repo.Deprecate(ctx, id, sunsetDate, replacementURI); err != nil {
+		return err
+	}
+
+	s.appendLedger(ctx, agent.URI(), "deprecate", "nexus-system", map[string]string{
+		"agent_id":        agent.AgentID,
+		"replacement_uri": replacementURI,
+	})
+	s.dispatchWebhook(ctx, "agent.deprecated", map[string]string{
+		"agent_id":        agent.ID.String(),
+		"uri":             agent.URI(),
+		"replacement_uri": replacementURI,
+	})
+
+	return nil
+}
+
+// ListActiveEndpoints returns active agents with endpoints (for health checks).
+func (s *AgentService) ListActiveEndpoints(ctx context.Context) ([]*model.Agent, error) {
+	return s.repo.ListActiveEndpoints(ctx)
+}
+
+// UpdateHealthStatus updates an agent's health status and last-seen timestamp.
+func (s *AgentService) UpdateHealthStatus(ctx context.Context, id uuid.UUID, status string, lastSeenAt time.Time) error {
+	return s.repo.UpdateHealthStatus(ctx, id, status, lastSeenAt)
 }
 
 // ListByOwnerDomain returns active agents for a given owner domain.

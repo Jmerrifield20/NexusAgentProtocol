@@ -220,7 +220,9 @@ interface NAPState {
   agent_uri: string;           // Stable agent:// URI — never changes
   status: 'pending'            // Registered, awaiting email/DNS verification
          | 'active'            // Fully verified and live
-         | 'revoked'           // Manually revoked
+         | 'suspended'         // Temporarily blocked (reversible via restore)
+         | 'deprecated'        // Marked for retirement (still resolvable with warnings)
+         | 'revoked'           // Permanently revoked
          | 'expired';          // Inactive for 90 days (domain-verified only)
 
   // Free-hosted only

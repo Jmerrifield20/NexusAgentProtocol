@@ -28,6 +28,11 @@ identity:
 dns:
   challenge_ttl_minutes: 15
 
+health:
+  check_interval: "5m"
+  probe_timeout: "10s"
+  fail_threshold: 3
+
 trust_ledger:
   enabled: true
 

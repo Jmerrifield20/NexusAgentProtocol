@@ -143,3 +143,116 @@ func TestIssuer_VerifyPeerCert(t *testing.T) {
 		t.Error("returned certificate serial does not match")
 	}
 }
+
+func TestIssueIntermediateCert_MaxPathLenZero(t *testing.T) {
+	ca := newTestCA(t)
+	issuer := identity.NewIssuer(ca)
+
+	issued, err := issuer.IssueIntermediateCert("acme.com", 365*24*time.Hour, 0)
+	if err != nil {
+		t.Fatalf("IssueIntermediateCert(maxPathLen=0) error: %v", err)
+	}
+
+	if !issued.Cert.IsCA {
+		t.Error("expected IsCA=true")
+	}
+	if issued.Cert.MaxPathLen != 0 {
+		t.Errorf("MaxPathLen: got %d, want 0", issued.Cert.MaxPathLen)
+	}
+	if !issued.Cert.MaxPathLenZero {
+		t.Error("expected MaxPathLenZero=true for maxPathLen=0")
+	}
+}
+
+func TestIssueIntermediateCert_MaxPathLenOne(t *testing.T) {
+	ca := newTestCA(t)
+	issuer := identity.NewIssuer(ca)
+
+	issued, err := issuer.IssueIntermediateCert("gov.kr", 365*24*time.Hour, 1)
+	if err != nil {
+		t.Fatalf("IssueIntermediateCert(maxPathLen=1) error: %v", err)
+	}
+
+	if !issued.Cert.IsCA {
+		t.Error("expected IsCA=true")
+	}
+	if issued.Cert.MaxPathLen != 1 {
+		t.Errorf("MaxPathLen: got %d, want 1", issued.Cert.MaxPathLen)
+	}
+	if issued.Cert.MaxPathLenZero {
+		t.Error("expected MaxPathLenZero=false for maxPathLen=1")
+	}
+}
+
+func TestSubDelegation_IntermediateCanIssue(t *testing.T) {
+	// Root issues intermediate with MaxPathLen=1.
+	ca := newTestCA(t)
+	rootIssuer := identity.NewIssuer(ca)
+
+	intermediate, err := rootIssuer.IssueIntermediateCert("gov.kr", 365*24*time.Hour, 1)
+	if err != nil {
+		t.Fatalf("issue intermediate: %v", err)
+	}
+
+	// Build an intermediate-mode issuer from the issued cert+key.
+	intermediateCert, intermediateKey, err := identity.LoadCertAndKey(
+		[]byte(intermediate.CertPEM),
+		[]byte(intermediate.KeyPEM),
+	)
+	if err != nil {
+		t.Fatalf("load intermediate cert+key: %v", err)
+	}
+
+	rootPool := ca.CertPool()
+	intIssuer := identity.NewIssuerWithIntermediate(intermediateCert, intermediateKey, rootPool)
+
+	// Intermediate (MaxPathLen=1) issues sub-intermediate with MaxPathLen=0.
+	subIntermediate, err := intIssuer.IssueIntermediateCert("molit.go.kr", 365*24*time.Hour, 0)
+	if err != nil {
+		t.Fatalf("issue sub-intermediate: %v", err)
+	}
+
+	if !subIntermediate.Cert.IsCA {
+		t.Error("sub-intermediate: expected IsCA=true")
+	}
+	if subIntermediate.Cert.MaxPathLen != 0 {
+		t.Errorf("sub-intermediate MaxPathLen: got %d, want 0", subIntermediate.Cert.MaxPathLen)
+	}
+	if !subIntermediate.Cert.MaxPathLenZero {
+		t.Error("sub-intermediate: expected MaxPathLenZero=true")
+	}
+}
+
+func TestSubDelegation_CannotExceedParent(t *testing.T) {
+	// Root issues intermediate with MaxPathLen=1.
+	ca := newTestCA(t)
+	rootIssuer := identity.NewIssuer(ca)
+
+	intermediate, err := rootIssuer.IssueIntermediateCert("gov.kr", 365*24*time.Hour, 1)
+	if err != nil {
+		t.Fatalf("issue intermediate: %v", err)
+	}
+
+	intermediateCert, intermediateKey, err := identity.LoadCertAndKey(
+		[]byte(intermediate.CertPEM),
+		[]byte(intermediate.KeyPEM),
+	)
+	if err != nil {
+		t.Fatalf("load intermediate cert+key: %v", err)
+	}
+
+	rootPool := ca.CertPool()
+	intIssuer := identity.NewIssuerWithIntermediate(intermediateCert, intermediateKey, rootPool)
+
+	// Trying to issue a sub-intermediate with MaxPathLen=1 (same as parent) must fail.
+	_, err = intIssuer.IssueIntermediateCert("molit.go.kr", 365*24*time.Hour, 1)
+	if err == nil {
+		t.Error("expected error when child maxPathLen >= parent maxPathLen, got nil")
+	}
+
+	// MaxPathLen=2 (greater than parent) must also fail.
+	_, err = intIssuer.IssueIntermediateCert("molit.go.kr", 365*24*time.Hour, 2)
+	if err == nil {
+		t.Error("expected error when child maxPathLen > parent maxPathLen, got nil")
+	}
+}

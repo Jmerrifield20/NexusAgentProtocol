@@ -13,10 +13,12 @@ import (
 type AgentStatus string
 
 const (
-	AgentStatusPending AgentStatus = "pending"
-	AgentStatusActive  AgentStatus = "active"
-	AgentStatusRevoked AgentStatus = "revoked"
-	AgentStatusExpired AgentStatus = "expired"
+	AgentStatusPending    AgentStatus = "pending"
+	AgentStatusActive     AgentStatus = "active"
+	AgentStatusRevoked    AgentStatus = "revoked"
+	AgentStatusExpired    AgentStatus = "expired"
+	AgentStatusSuspended  AgentStatus = "suspended"
+	AgentStatusDeprecated AgentStatus = "deprecated"
 )
 
 // RegistrationType indicates how the agent is hosted.
@@ -66,6 +68,13 @@ type Agent struct {
 	// System-managed fields updated by health checks.
 	LastSeenAt   *time.Time `json:"last_seen_at,omitempty" db:"last_seen_at"`
 	HealthStatus string     `json:"health_status"          db:"health_status"`
+	// Revocation / suspension fields.
+	RevocationReason string     `json:"revocation_reason,omitempty" db:"revocation_reason"`
+	SuspendedAt      *time.Time `json:"suspended_at,omitempty"      db:"suspended_at"`
+	// Deprecation fields.
+	DeprecatedAt   *time.Time `json:"deprecated_at,omitempty"   db:"deprecated_at"`
+	SunsetDate     *time.Time `json:"sunset_date,omitempty"     db:"sunset_date"`
+	ReplacementURI string     `json:"replacement_uri,omitempty" db:"replacement_uri"`
 	// TrustTier is computed at read time from status, registration_type, and cert_serial.
 	// It is never stored in the database.
 	TrustTier TrustTier `json:"trust_tier" db:"-"`
@@ -95,7 +104,7 @@ func (a *Agent) URI() string {
 // ComputeTrustTier derives the credibility tier from the agent's current state.
 // The result depends only on fields already present in the agents table row.
 func (a *Agent) ComputeTrustTier() TrustTier {
-	if a.Status != AgentStatusActive {
+	if a.Status != AgentStatusActive && a.Status != AgentStatusDeprecated {
 		return TierUnverified
 	}
 	if a.RegistrationType == RegistrationTypeDomain {
@@ -163,6 +172,12 @@ type RegisterRequest struct {
 	// MCPTools declares the MCP tool definitions this agent exposes.
 	// Stored in agent metadata and served at /api/v1/agents/:id/mcp-manifest.json.
 	MCPTools []mcpmanifest.MCPTool `json:"mcp_tools,omitempty"`
+}
+
+// DeprecateRequest is the payload for deprecating an agent.
+type DeprecateRequest struct {
+	SunsetDate     string `json:"sunset_date"`     // RFC 3339 date, e.g. "2026-06-01"
+	ReplacementURI string `json:"replacement_uri"`
 }
 
 // UpdateRequest is the payload for updating an existing agent registration.

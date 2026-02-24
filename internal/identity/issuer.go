@@ -69,13 +69,37 @@ func (i *Issuer) CACertPEM() string {
 	return string(i.ca.CertPEM())
 }
 
-// IssueIntermediateCert signs a subordinate CA certificate from the root CA.
-// MaxPathLen=0 prevents intermediates from issuing further intermediates.
-// Default validity is 5 years. Only callable when the Issuer is in root mode.
-func (i *Issuer) IssueIntermediateCert(org string, validFor time.Duration) (*IssuedCert, error) {
-	if i.ca == nil || i.ca.cert == nil || i.ca.key == nil {
-		return nil, fmt.Errorf("IssueIntermediateCert: issuer is not in root mode (no CAManager)")
+// IssueIntermediateCert signs a subordinate CA certificate.
+// maxPathLen controls how many further CA levels the intermediate may issue:
+//   - 0 = leaf-only (default for most registries)
+//   - 1 = can issue one level of sub-intermediates (sub-delegation)
+//
+// Callable in root mode (CAManager) or intermediate mode when the parent cert
+// has MaxPathLen > 0.  The child's MaxPathLen must be strictly less than the
+// parent's MaxPathLen when issued by an intermediate.
+func (i *Issuer) IssueIntermediateCert(org string, validFor time.Duration, maxPathLen int) (*IssuedCert, error) {
+	// Determine signing parent.
+	var (
+		parentCert *x509.Certificate
+		signerKey  interface{}
+	)
+	switch {
+	case i.ca != nil && i.ca.cert != nil && i.ca.key != nil:
+		// Root mode — sign with root CA.
+		parentCert = i.ca.cert
+		signerKey = i.ca.key
+	case i.intermediateCert != nil && i.intermediateKey != nil && i.intermediateCert.MaxPathLen > 0:
+		// Intermediate mode with sub-delegation authority.
+		if maxPathLen >= i.intermediateCert.MaxPathLen {
+			return nil, fmt.Errorf("IssueIntermediateCert: child maxPathLen (%d) must be < parent maxPathLen (%d)",
+				maxPathLen, i.intermediateCert.MaxPathLen)
+		}
+		parentCert = i.intermediateCert
+		signerKey = i.intermediateKey
+	default:
+		return nil, fmt.Errorf("IssueIntermediateCert: issuer cannot issue intermediate CAs (no root CA and intermediate MaxPathLen=0)")
 	}
+
 	if validFor == 0 {
 		validFor = 5 * 365 * 24 * time.Hour
 	}
@@ -102,11 +126,11 @@ func (i *Issuer) IssueIntermediateCert(org string, validFor time.Duration) (*Iss
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 		BasicConstraintsValid: true,
 		IsCA:                  true,
-		MaxPathLen:            0,
-		MaxPathLenZero:        true,
+		MaxPathLen:            maxPathLen,
+		MaxPathLenZero:        maxPathLen == 0,
 	}
 
-	certDER, err := x509.CreateCertificate(rand.Reader, template, i.ca.cert, &subKey.PublicKey, i.ca.key)
+	certDER, err := x509.CreateCertificate(rand.Reader, template, parentCert, &subKey.PublicKey, signerKey)
 	if err != nil {
 		return nil, fmt.Errorf("create intermediate certificate: %w", err)
 	}

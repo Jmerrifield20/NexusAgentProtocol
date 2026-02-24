@@ -23,6 +23,7 @@ type federationRepo interface {
 	List(ctx context.Context, status RegistryStatus, limit, offset int) ([]*RegisteredRegistry, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status RegistryStatus) error
 	SetIntermediateCA(ctx context.Context, id uuid.UUID, certPEM string) error
+	UpdateMaxPathLen(ctx context.Context, id uuid.UUID, maxPathLen int) error
 }
 
 // FederationRepository is the Postgres-backed implementation of federationRepo.
@@ -39,14 +40,15 @@ func NewFederationRepository(pool *pgxpool.Pool, logger *zap.Logger) *Federation
 // Create inserts a new registered_registries row.
 func (r *FederationRepository) Create(ctx context.Context, reg *RegisteredRegistry) error {
 	const q = `
-		INSERT INTO registered_registries (trust_root, endpoint_url, intermediate_ca, status)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO registered_registries (trust_root, endpoint_url, intermediate_ca, max_path_len, status)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, registered_at, updated_at`
 
 	row := r.pool.QueryRow(ctx, q,
 		reg.TrustRoot,
 		reg.EndpointURL,
 		reg.IntermediateCA,
+		reg.MaxPathLen,
 		string(reg.Status),
 	)
 	return row.Scan(&reg.ID, &reg.RegisteredAt, &reg.UpdatedAt)
@@ -55,7 +57,7 @@ func (r *FederationRepository) Create(ctx context.Context, reg *RegisteredRegist
 // GetByTrustRoot fetches a registry by its trust_root value.
 func (r *FederationRepository) GetByTrustRoot(ctx context.Context, trustRoot string) (*RegisteredRegistry, error) {
 	const q = `
-		SELECT id, trust_root, endpoint_url, intermediate_ca, status, registered_at, updated_at
+		SELECT id, trust_root, endpoint_url, intermediate_ca, max_path_len, status, registered_at, updated_at
 		FROM registered_registries
 		WHERE trust_root = $1`
 
@@ -65,7 +67,7 @@ func (r *FederationRepository) GetByTrustRoot(ctx context.Context, trustRoot str
 // GetByID fetches a registry by its primary key UUID.
 func (r *FederationRepository) GetByID(ctx context.Context, id uuid.UUID) (*RegisteredRegistry, error) {
 	const q = `
-		SELECT id, trust_root, endpoint_url, intermediate_ca, status, registered_at, updated_at
+		SELECT id, trust_root, endpoint_url, intermediate_ca, max_path_len, status, registered_at, updated_at
 		FROM registered_registries
 		WHERE id = $1`
 
@@ -85,14 +87,14 @@ func (r *FederationRepository) List(ctx context.Context, status RegistryStatus, 
 	)
 	if status == "" {
 		const q = `
-			SELECT id, trust_root, endpoint_url, intermediate_ca, status, registered_at, updated_at
+			SELECT id, trust_root, endpoint_url, intermediate_ca, max_path_len, status, registered_at, updated_at
 			FROM registered_registries
 			ORDER BY registered_at DESC
 			LIMIT $1 OFFSET $2`
 		rows, err = r.pool.Query(ctx, q, limit, offset)
 	} else {
 		const q = `
-			SELECT id, trust_root, endpoint_url, intermediate_ca, status, registered_at, updated_at
+			SELECT id, trust_root, endpoint_url, intermediate_ca, max_path_len, status, registered_at, updated_at
 			FROM registered_registries
 			WHERE status = $1
 			ORDER BY registered_at DESC
@@ -158,6 +160,7 @@ func (r *FederationRepository) scan(row pgx.Row) (*RegisteredRegistry, error) {
 		&reg.TrustRoot,
 		&reg.EndpointURL,
 		&reg.IntermediateCA,
+		&reg.MaxPathLen,
 		&status,
 		&reg.RegisteredAt,
 		&reg.UpdatedAt,
@@ -181,6 +184,7 @@ func (r *FederationRepository) scanRow(rows pgx.Rows) (*RegisteredRegistry, erro
 		&reg.TrustRoot,
 		&reg.EndpointURL,
 		&reg.IntermediateCA,
+		&reg.MaxPathLen,
 		&status,
 		&reg.RegisteredAt,
 		&reg.UpdatedAt,
@@ -190,4 +194,21 @@ func (r *FederationRepository) scanRow(rows pgx.Rows) (*RegisteredRegistry, erro
 	}
 	reg.Status = RegistryStatus(status)
 	return reg, nil
+}
+
+// UpdateMaxPathLen updates the max_path_len for a registry entry.
+func (r *FederationRepository) UpdateMaxPathLen(ctx context.Context, id uuid.UUID, maxPathLen int) error {
+	const q = `
+		UPDATE registered_registries
+		SET max_path_len = $1, updated_at = now()
+		WHERE id = $2`
+
+	tag, err := r.pool.Exec(ctx, q, maxPathLen, id)
+	if err != nil {
+		return fmt.Errorf("update max_path_len: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

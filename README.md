@@ -24,7 +24,10 @@ Today, agents are addressed by their hosting URL. When you move providers, chang
 - **A2A compatible** — every activated agent gets an [Agent2Agent](https://google.github.io/A2A/)-spec card with declared skills and a NAP endorsement JWT, deployable at `/.well-known/agent.json`.
 - **MCP ready** — declare your tools at registration and get a [Model Context Protocol](https://modelcontextprotocol.io/) manifest served at a stable URL.
 - **Safe** — registrations are automatically scored for threat patterns. Dangerous agents are rejected before they enter the directory.
-- **Auditable** — every lifecycle event (register, activate, revoke) is appended to a Merkle-chain trust ledger anyone can verify.
+- **Auditable** — every lifecycle event (register, activate, revoke, suspend, deprecate) is appended to a Merkle-chain trust ledger anyone can verify.
+- **Continuously monitored** — active agents are health-probed on a schedule. Degraded endpoints are flagged automatically.
+- **Observable** — Prometheus metrics at `/metrics` give you request rates, latency histograms, health-check results, and agent counts by status.
+- **Webhook-driven** — subscribe to lifecycle events (`agent.registered`, `agent.revoked`, `agent.health_degraded`, etc.) and get HMAC-signed POST notifications in real time.
 
 ---
 
@@ -153,7 +156,7 @@ Every agent carries a computed trust tier so callers know how much verification 
 | **Trusted** | Domain-verified (DNS-01) + active + mTLS certificate issued |
 | **Verified** | Domain-verified + active, no cert |
 | **Basic** | NAP-hosted + email-verified + active |
-| **Unverified** | Pending, revoked, or expired |
+| **Unverified** | Pending, revoked, suspended, or expired |
 
 Gate your integrations on tier. Only accept `agent://` callers at the trust level your use case requires.
 
@@ -165,7 +168,7 @@ The registry ships with a Next.js web portal for browsing the agent directory, m
 
 - **Agent directory** — search by capability (e.g. `finance>accounting`) or by org domain.
 - **Per-agent pages** — skills, integration links (A2A card, MCP manifest), and live health status.
-- **Account management** — register, activate, and revoke agents via the UI.
+- **Account management** — register, activate, suspend, restore, deprecate, and revoke agents via the UI.
 - **API docs** — full reference at `/developers`.
 
 ---
@@ -199,6 +202,9 @@ NexusAgentProtocol/
 │   ├── trustledger/   # Merkle-chain audit log (Postgres-backed)
 │   ├── dns/           # DNS-01 challenge verification
 │   ├── threat/        # Registration threat scoring
+│   ├── health/        # Continuous endpoint health checker
+│   ├── webhooks/      # Webhook subscriptions and event dispatch
+│   ├── federation/    # Cross-registry resolution and CA hierarchy
 │   └── users/         # Accounts, email verification, OAuth
 ├── pkg/
 │   ├── client/        # Go SDK
@@ -219,7 +225,7 @@ The registry is a **pure phonebook**. It maps `agent://` URIs to endpoints — n
 
 - Resolve queries are not logged. The registry does not know who is calling whom.
 - Agent-to-agent traffic never passes through the registry. After the lookup, agents talk directly.
-- The only data retained is registration metadata and Trust Ledger lifecycle events.
+- The only data retained is registration metadata, Trust Ledger lifecycle events, abuse reports, and webhook subscription URLs.
 
 ---
 

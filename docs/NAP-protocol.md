@@ -241,13 +241,40 @@ All endpoints are on the Nexus registry at `https://registry.nexusagentprotocol.
 | `POST` | `/api/v1/agents` | DNS verified | Register a new agent |
 | `POST` | `/api/v1/agents/:id/activate` | mTLS | Issue X.509 cert; returns cert + private key |
 | `DELETE` | `/api/v1/agents/:id` | mTLS | Revoke agent |
+| `POST` | `/api/v1/agents/:id/suspend` | Agent/User | Suspend agent (reversible; blocks resolution) |
+| `POST` | `/api/v1/agents/:id/restore` | Agent/User | Restore a suspended agent to active |
+| `POST` | `/api/v1/agents/:id/deprecate` | Agent/User | Mark agent as deprecated with optional sunset date |
+
+### Revocation & Trust
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/v1/crl` | None | Certificate Revocation List (revoked cert serials) |
+| `POST` | `/api/v1/agents/:id/report-abuse` | User | Report an agent for abuse (max 3 open per user) |
+| `GET` | `/api/v1/admin/abuse-reports` | Admin | List abuse reports (filterable by status) |
+| `PATCH` | `/api/v1/admin/abuse-reports/:id` | Admin | Resolve or dismiss an abuse report |
 
 ### Resolution
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `GET` | `/api/v1/resolve?uri=agent://…` | None | Resolve URI → endpoint |
+| `POST` | `/api/v1/resolve/batch` | None | Resolve up to 100 URIs in one request |
 | `POST` | `/api/v1/token` | mTLS | Exchange cert for JWT Task Token |
+
+### Webhooks
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/v1/webhooks` | User | Subscribe to lifecycle events |
+| `GET` | `/api/v1/webhooks` | User | List your webhook subscriptions |
+| `DELETE` | `/api/v1/webhooks/:id` | User | Delete a webhook subscription |
+
+### Observability
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/metrics` | None | Prometheus metrics (request rates, latency, agent counts) |
 
 ### Trust Ledger
 
@@ -279,6 +306,12 @@ c, err := client.NewFromCertDir(registryURL, "~/.nap/certs/yourdomain.com")
 result, err := c.Resolve(ctx, "agent://nexusagentprotocol.com/finance/billing/agent_7x2v9q")
 // result.Endpoint → "https://billing.example.com"
 
+// Batch resolve (up to 100 URIs)
+results, err := c.ResolveBatch(ctx, []string{
+    "agent://acme.com/finance/agent_1",
+    "agent://acme.com/legal/agent_2",
+})
+
 // Call another agent (resolve + auth + HTTP in one step)
 err = c.CallAgent(ctx, uri, method, path, reqBody, &respBody)
 
@@ -294,6 +327,15 @@ certs, err := c.ActivateAgent(ctx, agent.ID)
 
 // List agents
 agents, err := c.ListAgents(ctx, "nexusagentprotocol.com", "ecommerce")
+
+// Lifecycle management
+err = c.RevokeAgent(ctx, agentID, "compromised credentials")  // with reason
+err = c.SuspendAgent(ctx, agentID)                             // reversible
+err = c.RestoreAgent(ctx, agentID)                             // undo suspend
+
+// Certificate Revocation List
+crl, err := c.GetCRL(ctx)
+// crl.Entries → [{CertSerial, Reason, RevokedAt}]
 ```
 
 ---
@@ -364,7 +406,7 @@ Use the `--capability` flag in `nap claim` to set your node, e.g. `--capability 
 
 ## Trust Ledger
 
-Every registration and revocation event is appended to an append-only hash chain (similar to a blockchain but without consensus overhead). This provides:
+Every lifecycle event is appended to an append-only hash chain (similar to a blockchain but without consensus overhead). This provides:
 
 - **Auditability** — anyone can verify the full history of the registry
 - **Tamper evidence** — any modification to a past entry breaks the chain
@@ -391,6 +433,10 @@ curl https://registry.nexusagentprotocol.com/api/v1/ledger/verify
 | Registry compromise | Trust Ledger provides tamper-evident audit trail |
 | Man-in-the-middle | TLS on all connections; HTTPS-only endpoints enforced |
 | Replayed tokens | JWT `jti` (token ID) claim; `exp` enforcement |
+| Abusive or malicious agent | Abuse reporting system; admin review and resolution workflow |
+| Compromised agent credentials | Suspend immediately (reversible); revoke with reason for permanent removal |
+| Stale or abandoned agents | Deprecation with sunset date and replacement URI; health checker detects unresponsive endpoints |
+| Revoked cert still trusted | Public CRL endpoint at `/api/v1/crl` lists all revoked cert serials |
 
 ---
 
@@ -412,9 +458,11 @@ The Nexus registry is a **pure phonebook**. Its job is to map `agent://` URIs to
 The only persistent data is:
 
 1. **Registration metadata** — agent URI, endpoint URL, capability node, display name, status
-2. **Trust Ledger entries** — lifecycle events only: `register`, `activate`, `revoke`, `update`
+2. **Trust Ledger entries** — lifecycle events: `register`, `activate`, `revoke`, `suspend`, `restore`, `deprecate`, `update`
 3. **X.509 certificates** — the public cert issued at activation (private key is never stored)
 4. **User accounts** — email and password hash for free-tier hosted agents
+5. **Abuse reports** — reporter, reason, resolution status (no agent traffic is inspected)
+6. **Webhook subscriptions** — subscriber URL and event filter (delivery payloads contain only agent metadata)
 
 ### The flow after a lookup
 
@@ -435,6 +483,230 @@ The registry sees the resolve request and nothing after it. It has no visibility
 An agent's endpoint is public by design — it is listed in the registry so others can call it. What is **not** public, and what NAP deliberately never captures, is the social graph of which agents talk to which other agents. That information belongs to the agents themselves, not to the registry operator.
 
 This is a **deliberate design choice**, not a limitation. A coordination layer should coordinate — not surveil.
+
+---
+
+## Agent Lifecycle States
+
+An agent transitions through the following statuses:
+
+```
+                  ┌──────────┐
+                  │ pending  │
+                  └────┬─────┘
+                       │ activate
+                  ┌────▼─────┐
+          ┌───────│  active   │───────┐
+          │       └────┬─────┘       │
+          │ suspend    │ deprecate   │ revoke
+     ┌────▼─────┐ ┌───▼──────┐ ┌───▼──────┐
+     │suspended │ │deprecated│ │ revoked  │
+     └────┬─────┘ └──────────┘ └──────────┘
+          │ restore                (terminal)
+     ┌────▼─────┐
+     │  active   │
+     └──────────┘
+```
+
+| Status | Resolvable | Reversible | Description |
+|--------|-----------|------------|-------------|
+| `pending` | No | -- | Registered, awaiting verification |
+| `active` | Yes | -- | Fully verified and live |
+| `suspended` | No | Yes (restore) | Temporarily blocked; can be restored to active |
+| `deprecated` | Yes (with warnings) | No | Marked for retirement; sunset headers returned on resolve |
+| `revoked` | No | No | Permanently removed from resolution |
+| `expired` | No | No | Certificate or registration expired |
+
+### Suspend and Restore
+
+Suspension is a reversible action for temporarily taking an agent offline (e.g. during a security incident, maintenance, or credential rotation):
+
+```bash
+# Suspend
+curl -X POST https://registry.nexusagentprotocol.com/api/v1/agents/<UUID>/suspend \
+  -H "Authorization: Bearer $TOKEN"
+
+# Restore
+curl -X POST https://registry.nexusagentprotocol.com/api/v1/agents/<UUID>/restore \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Suspended agents are excluded from resolve queries. Only suspended agents can be restored; revoked agents cannot.
+
+### Deprecation
+
+Deprecation signals to callers that an agent is being retired. The agent remains resolvable, but resolve responses include warning headers:
+
+```bash
+curl -X POST https://registry.nexusagentprotocol.com/api/v1/agents/<UUID>/deprecate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sunset_date": "2026-06-01", "replacement_uri": "agent://acme.com/finance/agent_new"}'
+```
+
+When a deprecated agent is resolved, the response includes:
+
+| Header | Value |
+|--------|-------|
+| `X-NAP-Deprecated` | `true` |
+| `Sunset` | `2026-06-01` |
+| `X-NAP-Replacement` | `agent://acme.com/finance/agent_new` |
+
+### Revocation with Reason
+
+Revocation now accepts an optional reason string that is recorded in the Trust Ledger:
+
+```bash
+curl -X POST https://registry.nexusagentprotocol.com/api/v1/agents/<UUID>/revoke \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "compromised credentials"}'
+```
+
+### Certificate Revocation List (CRL)
+
+The CRL endpoint returns all revoked agent certificate serials:
+
+```bash
+curl https://registry.nexusagentprotocol.com/api/v1/crl
+```
+
+```json
+{
+  "entries": [
+    {"cert_serial": "3f9a...", "reason": "compromised", "revoked_at": "2026-02-20T12:00:00Z"}
+  ],
+  "count": 1,
+  "generated_at": "2026-02-24T10:00:00Z"
+}
+```
+
+---
+
+## Continuous Health Monitoring
+
+The registry continuously probes active agent endpoints to detect outages. Agents that fail to respond are flagged as degraded.
+
+### How it works
+
+1. Every `check_interval` (default 5 minutes), the health checker probes all active agent endpoints.
+2. A probe sends `HEAD` to the endpoint. If that fails, it falls back to `GET`. Any 2xx response is a success.
+3. After `fail_threshold` (default 3) consecutive failures, the agent's health status is set to `degraded`.
+4. Once a degraded agent responds successfully, it is restored to `healthy`.
+5. Only **transitions** (healthy to degraded, or degraded to healthy) write to the database and Trust Ledger.
+
+### Configuration
+
+```yaml
+health:
+  check_interval: "5m"    # how often to probe endpoints
+  probe_timeout: "10s"    # per-probe HTTP timeout
+  fail_threshold: 3       # consecutive failures before degrading
+```
+
+---
+
+## Abuse Reporting
+
+Users can report agents for abuse. Reports are reviewed by registry administrators.
+
+```bash
+# Report an agent (requires user token)
+curl -X POST https://registry.nexusagentprotocol.com/api/v1/agents/<UUID>/report-abuse \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "impersonation", "details": "This agent claims to be from our company."}'
+```
+
+- Each user can have at most **3 open reports** per agent (prevents spam).
+- Report statuses: `open` → `investigating` → `resolved` or `dismissed`.
+- Administrators review reports at `GET /api/v1/admin/abuse-reports` and resolve them with `PATCH /api/v1/admin/abuse-reports/:id`.
+
+---
+
+## Webhook Events
+
+Subscribe to agent lifecycle events and receive HMAC-signed HTTP POST notifications.
+
+### Subscribe
+
+```bash
+curl -X POST https://registry.nexusagentprotocol.com/api/v1/webhooks \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://hooks.example.com/nap",
+    "events": ["agent.registered", "agent.revoked", "agent.health_degraded"]
+  }'
+```
+
+### Event types
+
+| Event | Fired when |
+|-------|-----------|
+| `agent.registered` | A new agent is registered |
+| `agent.activated` | An agent is activated |
+| `agent.revoked` | An agent is revoked |
+| `agent.suspended` | An agent is suspended |
+| `agent.deprecated` | An agent is deprecated |
+| `agent.health_degraded` | Health checker detects an unresponsive endpoint |
+
+### Delivery
+
+- Each delivery includes an `X-NAP-Signature` header containing an HMAC-SHA256 signature of the payload, computed with the subscription secret.
+- Failed deliveries are retried up to 3 times with exponential backoff (1s, 5s, 25s).
+- Delivery history is recorded per subscription.
+
+### Manage subscriptions
+
+```bash
+# List your subscriptions
+curl https://registry.nexusagentprotocol.com/api/v1/webhooks \
+  -H "Authorization: Bearer $TOKEN"
+
+# Delete a subscription
+curl -X DELETE https://registry.nexusagentprotocol.com/api/v1/webhooks/<ID> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+---
+
+## Batch Resolve
+
+Resolve up to 100 `agent://` URIs in a single request:
+
+```bash
+curl -X POST https://registry.nexusagentprotocol.com/api/v1/resolve/batch \
+  -H "Content-Type: application/json" \
+  -d '{"uris": ["agent://acme.com/finance/agent_1", "agent://nap/assistant/agent_2"]}'
+```
+
+```json
+{
+  "results": [
+    {"uri": "agent://acme.com/finance/agent_1", "endpoint": "https://agents.acme.com", "status": "active"},
+    {"uri": "agent://nap/assistant/agent_2", "error": "agent not found"}
+  ],
+  "count": 2
+}
+```
+
+Partial failures are OK — each result has its own `error` field. Resolution runs with bounded concurrency (10 parallel lookups).
+
+---
+
+## Prometheus Metrics
+
+The registry exposes a `/metrics` endpoint in Prometheus exposition format.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `nap_agents_total` | Gauge | `status` | Total agents by status |
+| `nap_requests_total` | Counter | `method`, `path`, `status` | HTTP requests by method, path, and status code |
+| `nap_request_duration_seconds` | Histogram | `method`, `path` | Request latency distribution |
+| `nap_health_checks_total` | Counter | `result` | Health check probe results |
+| `nap_ledger_entries_total` | Counter | -- | Trust Ledger entries appended |
+| `nap_webhook_deliveries_total` | Counter | `success` | Webhook delivery attempts |
 
 ---
 
@@ -462,6 +734,8 @@ This is a **deliberate design choice**, not a limitation. A coordination layer s
 - [ ] Protect your own endpoint with `identity.RequireToken(issuerURL)`
 - [ ] Optionally: deploy `nap-mcp-bridge` for Claude Desktop integration
 - [ ] Optionally: publish `/.well-known/agent-card.json` on your own domain
+- [ ] Optionally: subscribe to webhook events for real-time notifications
+- [ ] Optionally: monitor `/metrics` with Prometheus/Grafana
 
 ---
 

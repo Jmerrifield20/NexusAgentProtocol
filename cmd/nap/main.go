@@ -631,7 +631,7 @@ func runRevoke(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := authC.RevokeAgent(ctx, agentUUID); err != nil {
+	if err := authC.RevokeAgent(ctx, agentUUID, ""); err != nil {
 		return fmt.Errorf("revoke failed: %w", err)
 	}
 

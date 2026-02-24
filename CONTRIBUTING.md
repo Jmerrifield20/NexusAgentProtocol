@@ -77,10 +77,6 @@ Open a GitHub issue with:
 - Expected vs. actual behavior.
 - Go version and OS.
 
-## Code of Conduct
-
-All participants are expected to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
-
 ## License
 
 By contributing, you agree that your contributions will be licensed under the Apache 2.0 License.

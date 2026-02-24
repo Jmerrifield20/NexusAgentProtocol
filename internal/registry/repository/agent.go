@@ -472,6 +472,112 @@ func (r *AgentRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// UpdateStatusWithReason changes the status and records a reason (used for revocations).
+func (r *AgentRepository) UpdateStatusWithReason(ctx context.Context, id uuid.UUID, status model.AgentStatus, reason string) error {
+	query := `UPDATE agents SET status = $2, revocation_reason = $3, updated_at = $4 WHERE id = $1`
+	tag, err := r.db.Exec(ctx, query, id, status, reason, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Suspend sets an agent's status to suspended and records suspended_at.
+func (r *AgentRepository) Suspend(ctx context.Context, id uuid.UUID) error {
+	now := time.Now().UTC()
+	query := `UPDATE agents SET status = 'suspended', suspended_at = $2, updated_at = $2 WHERE id = $1 AND status = 'active'`
+	tag, err := r.db.Exec(ctx, query, id, now)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Restore re-activates a suspended agent by setting status=active and clearing suspended_at.
+func (r *AgentRepository) Restore(ctx context.Context, id uuid.UUID) error {
+	now := time.Now().UTC()
+	query := `UPDATE agents SET status = 'active', suspended_at = NULL, updated_at = $2 WHERE id = $1 AND status = 'suspended'`
+	tag, err := r.db.Exec(ctx, query, id, now)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListRevokedCerts returns agents that are revoked and have a non-empty cert_serial.
+func (r *AgentRepository) ListRevokedCerts(ctx context.Context) ([]*model.Agent, error) {
+	query := `SELECT * FROM agents WHERE status = 'revoked' AND cert_serial != '' ORDER BY updated_at DESC`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var agents []*model.Agent
+	for rows.Next() {
+		a, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
+// Deprecate transitions an active agent to deprecated status with sunset metadata.
+func (r *AgentRepository) Deprecate(ctx context.Context, id uuid.UUID, sunsetDate *time.Time, replacementURI string) error {
+	now := time.Now().UTC()
+	query := `UPDATE agents SET status = 'deprecated', deprecated_at = $2, sunset_date = $3, replacement_uri = $4, updated_at = $2 WHERE id = $1 AND status = 'active'`
+	tag, err := r.db.Exec(ctx, query, id, now, sunsetDate, replacementURI)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListActiveEndpoints returns active agents that have a non-empty endpoint.
+func (r *AgentRepository) ListActiveEndpoints(ctx context.Context) ([]*model.Agent, error) {
+	query := `SELECT * FROM agents WHERE status = 'active' AND endpoint != '' ORDER BY last_seen_at ASC NULLS FIRST`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var agents []*model.Agent
+	for rows.Next() {
+		a, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
+// UpdateHealthStatus updates an agent's health_status and last_seen_at timestamp.
+func (r *AgentRepository) UpdateHealthStatus(ctx context.Context, id uuid.UUID, status string, lastSeenAt time.Time) error {
+	query := `UPDATE agents SET health_status = $2, last_seen_at = $3, updated_at = $4 WHERE id = $1`
+	tag, err := r.db.Exec(ctx, query, id, status, lastSeenAt, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // scanOne executes a query returning a single agent row.
 func (r *AgentRepository) scanOne(ctx context.Context, query string, args ...any) (*model.Agent, error) {
 	rows, err := r.db.Query(ctx, query, args...)
@@ -504,6 +610,8 @@ func (r *AgentRepository) scan(rows pgx.Rows) (*model.Agent, error) {
 		&a.OwnerUserID, &a.RegistrationType,
 		&a.Version, &a.Tags, &a.SupportURL,
 		&a.LastSeenAt, &a.HealthStatus,
+		&a.RevocationReason, &a.SuspendedAt,
+		&a.DeprecatedAt, &a.SunsetDate, &a.ReplacementURI,
 	)
 	if err != nil {
 		return nil, err

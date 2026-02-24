@@ -278,7 +278,7 @@ func TestRevokeAgent_success(t *testing.T) {
 
 	c, _ := client.New(srv.URL, client.WithBearerToken("test-token"))
 
-	err := c.RevokeAgent(context.Background(), "550e8400-e29b-41d4-a716-446655440000")
+	err := c.RevokeAgent(context.Background(), "550e8400-e29b-41d4-a716-446655440000", "")
 	if err != nil {
 		t.Fatalf("RevokeAgent: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestRevokeAgent_401(t *testing.T) {
 
 	c, _ := client.New(srv.URL) // no bearer token
 
-	err := c.RevokeAgent(context.Background(), "550e8400-e29b-41d4-a716-446655440000")
+	err := c.RevokeAgent(context.Background(), "550e8400-e29b-41d4-a716-446655440000", "")
 	if err == nil {
 		t.Error("expected error for unauthorized revoke")
 	}

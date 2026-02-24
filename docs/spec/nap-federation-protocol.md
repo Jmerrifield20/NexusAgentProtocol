@@ -33,9 +33,21 @@ Root CA (nexusagentprotocol.com)
 │   ValidFor: 10 years   MaxPathLen: unrestricted
 │
 ├── Intermediate CA — acme.com
-│   ValidFor: 5 years    MaxPathLen: 0 (cannot issue further intermediates)
+│   ValidFor: 5 years    MaxPathLen: 0 (default — cannot issue further intermediates)
 │   │
 │   └── Leaf cert — agent://acme.com/finance/agent_xyz
+│       ValidFor: 1 year
+│
+├── Intermediate CA — gov.kr (sub-delegation enabled)
+│   ValidFor: 5 years    MaxPathLen: 1 (can issue one level of sub-intermediates)
+│   │
+│   ├── Sub-Intermediate CA — molit.go.kr
+│   │   ValidFor: 5 years    MaxPathLen: 0
+│   │   │
+│   │   └── Leaf cert — agent://molit.go.kr/transport/agent_abc
+│   │       ValidFor: 1 year
+│   │
+│   └── Leaf cert — agent://gov.kr/governance/agent_def
 │       ValidFor: 1 year
 │
 └── Intermediate CA — globalbank.io
@@ -45,8 +57,9 @@ Root CA (nexusagentprotocol.com)
         ValidFor: 1 year
 ```
 
-**MaxPathLen=0** on all intermediate CAs ensures that federated registries
-cannot sub-delegate CA authority. Only the root can issue intermediate CAs.
+By default, **MaxPathLen=0** on intermediate CAs prevents sub-delegation.
+The root admin can grant sub-delegation to specific registries by increasing
+their `max_path_len` before issuing the intermediate CA (see Section 8).
 
 ---
 
@@ -61,8 +74,20 @@ registry applies the following discovery cascade:
 | 2 | **DNS TXT record** | `_nap-registry.{trustRoot}` → `v=nap1 url=https://registry.example.com` |
 | 3 | **Root registry fallback** | Configured `federation.root_registry_url` |
 
-A suspended registry (status=`suspended`) is skipped at step 1; DNS and
-root fallback also fail if the root registry actively blocks the trust root.
+A suspended registry (status=`suspended`) is skipped at step 1.
+
+**DNS results require root approval.** When a registry has `fedSvc` available
+(i.e. it is the root registry), DNS-discovered endpoints at step 2 are
+cross-referenced against the `registered_registries` table. The DNS result is
+only accepted if the trust root has an **active** entry. Unapproved or
+suspended trust roots are rejected and discovery falls through to step 3.
+This ensures the root registry remains the single source of truth for
+federation membership — publishing a `_nap-registry` TXT record alone is
+not sufficient to join the federation.
+
+Federated registries (which have `fedSvc = nil`) skip DNS discovery entirely
+and fall through to the root registry fallback, which is the correct behavior
+since the root is the authority.
 
 ---
 
@@ -129,8 +154,10 @@ configured `root_registry_url`, which can act as a global resolution proxy.
 
 ## 6. Security Notes
 
-- **MaxPathLen=0** — Federated registries cannot issue further intermediates.
-  Only the root CA can extend the chain.
+- **MaxPathLen control** — By default, all intermediate CAs are issued with
+  `MaxPathLen=0`, preventing sub-delegation. The root admin can grant
+  sub-delegation to specific registries (see Section 8). A hard cap of
+  `MaxAllowedPathLen=2` prevents excessively deep CA chains.
 - **Suspended blocking** — A suspended registry is excluded from table lookup.
   Operators should also publish a DNS revocation signal by removing or updating
   the `_nap-registry` TXT record.
@@ -141,10 +168,56 @@ configured `root_registry_url`, which can act as a global resolution proxy.
 - **mTLS verification** — In federated mode, peer certificates are verified
   against `rootCAPool` (Roots) with the intermediate cert in the Intermediates
   pool, ensuring the full chain is validated.
+- **Sub-delegation revocation** — Setting `max_path_len` back to 0 and
+  re-issuing the intermediate CA revokes sub-delegation authority. The
+  operator must redeploy with the new certificate.
 
 ---
 
-## 7. API Reference
+## 7. Sub-Delegation
+
+Sub-delegation allows the root admin to grant specific registries the ability
+to issue their own sub-intermediate CAs. This is useful for jurisdictional
+authority — for example, a government registry (`gov.kr`) that needs to onboard
+its own ministries (`molit.go.kr`, `moe.go.kr`).
+
+### Workflow
+
+```
+1. Register Korea:    POST /federation/register {trust_root: "gov.kr", ...}
+2. Approve:           POST /federation/registries/{id}/approve
+3. Grant delegation:  PATCH /federation/registries/{id}/delegation {max_path_len: 1}
+4. Issue CA:          POST /federation/issue-ca {trust_root: "gov.kr"}
+                      → cert has MaxPathLen=1 baked in
+5. Deliver cert+key to Korean counterpart (out of band)
+
+Later, to revoke sub-delegation:
+6. Revoke:            PATCH /federation/registries/{id}/delegation {max_path_len: 0}
+7. Re-issue CA:       POST /federation/issue-ca {trust_root: "gov.kr"}
+                      → new cert has MaxPathLen=0
+8. Korean operator must redeploy with new cert
+```
+
+### Auto-Detection
+
+When a federated registry boots with an intermediate CA cert that has
+`MaxPathLen > 0`, it automatically enables root-like behaviour:
+- The federation service is wired with the intermediate-mode issuer
+- Root-only routes (approve, issue-ca, delegation) are enabled
+- The registry can issue sub-intermediates to its sub-registries
+
+No additional configuration is required — the X.509 certificate itself
+carries the sub-delegation authority.
+
+### Constraints
+
+- `max_path_len` must be between 0 and `MaxAllowedPathLen` (currently 2)
+- A sub-intermediate's `MaxPathLen` must be strictly less than its parent's
+- Changes to `max_path_len` only take effect on the next CA re-issuance
+
+---
+
+## 8. API Reference
 
 ### POST /api/v1/federation/register
 Register a new federation member application.
@@ -171,3 +244,11 @@ Approve a pending registry.
 ### POST /api/v1/federation/registries/:id/suspend *(root only)*
 Suspend an active registry, blocking cross-registry resolution.
 **Response 200:** `RegisteredRegistry` (status=`suspended`)
+
+### PATCH /api/v1/federation/registries/:id/delegation *(root only)*
+Update the sub-delegation depth for a registered registry.
+The new value takes effect on the next CA re-issuance via `POST /federation/issue-ca`.
+
+**Body:** `{ "max_path_len": 1 }`
+**Response 200:** `{ "id": "...", "max_path_len": 1 }`
+**Errors:** 400 if `max_path_len` is negative or exceeds `MaxAllowedPathLen` (2)

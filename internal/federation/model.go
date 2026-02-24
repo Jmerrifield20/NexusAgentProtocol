@@ -20,12 +20,17 @@ const (
 	StatusSuspended RegistryStatus = "suspended"
 )
 
+// MaxAllowedPathLen is the hard cap on sub-delegation depth.
+// Prevents excessively deep CA chains.
+const MaxAllowedPathLen = 2
+
 // RegisteredRegistry is a remote registry that has applied to join the NAP federation.
 type RegisteredRegistry struct {
 	ID             string
 	TrustRoot      string
 	EndpointURL    string
 	IntermediateCA string
+	MaxPathLen     int
 	Status         RegistryStatus
 	RegisteredAt   time.Time
 	UpdatedAt      time.Time
@@ -46,11 +51,17 @@ type IssueCARequest struct {
 // IssueCAResponse contains the intermediate CA credentials returned to an operator.
 // The KeyPEM field is only ever delivered once and is never stored by the root registry.
 type IssueCAResponse struct {
-	TrustRoot string `json:"trust_root"`
-	CertPEM   string `json:"cert_pem"`
-	KeyPEM    string `json:"key_pem"`
-	Serial    string `json:"serial"`
-	ExpiresAt string `json:"expires_at"`
-	RootCAPEM string `json:"root_ca_pem"`
-	Warning   string `json:"warning"`
+	TrustRoot  string `json:"trust_root"`
+	CertPEM    string `json:"cert_pem"`
+	KeyPEM     string `json:"key_pem"`
+	Serial     string `json:"serial"`
+	ExpiresAt  string `json:"expires_at"`
+	RootCAPEM  string `json:"root_ca_pem"`
+	MaxPathLen int    `json:"max_path_len"`
+	Warning    string `json:"warning"`
+}
+
+// UpdateDelegationRequest is the payload for changing a registry's sub-delegation depth.
+type UpdateDelegationRequest struct {
+	MaxPathLen int `json:"max_path_len"`
 }

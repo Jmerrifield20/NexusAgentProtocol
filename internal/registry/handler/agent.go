@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -14,6 +16,7 @@ import (
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/repository"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/registry/service"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/users"
+	"github.com/jmerrifield20/NexusAgentProtocol/pkg/uri"
 	"go.uber.org/zap"
 )
 
@@ -108,11 +111,17 @@ func (h *AgentHandler) Register(rg *gin.RouterGroup) {
 		agents.DELETE("/:id", h.optionalAgentToken(), h.optionalUserToken(), h.DeleteAgent)
 		agents.POST("/:id/activate", h.optionalAgentToken(), h.optionalUserToken(), h.ActivateAgent)
 		agents.POST("/:id/revoke", h.requireToken(), h.optionalUserToken(), h.RevokeAgent)
+		agents.POST("/:id/suspend", h.optionalAgentToken(), h.optionalUserToken(), h.SuspendAgent)
+		agents.POST("/:id/restore", h.optionalAgentToken(), h.optionalUserToken(), h.RestoreAgent)
+		agents.POST("/:id/deprecate", h.optionalAgentToken(), h.optionalUserToken(), h.DeprecateAgent)
+		agents.POST("/:id/report-abuse", h.requireUserToken(), h.ReportAbuseProxy)
 	}
 
 	rg.GET("/resolve", h.ResolveAgent)
+	rg.POST("/resolve/batch", h.BatchResolve)
 	rg.GET("/lookup", h.LookupByDomain)
 	rg.GET("/capabilities", h.GetCapabilities)
+	rg.GET("/crl", h.GetCRL)
 	rg.GET("/users/me/agents", h.requireUserToken(), h.ListMyAgents)
 }
 
@@ -517,7 +526,13 @@ func (h *AgentHandler) RevokeAgent(c *gin.Context) {
 		}
 	}
 
-	if err := h.svc.Revoke(ctx, id); err != nil {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	// Ignore parse errors — reason is optional.
+	_ = c.ShouldBindJSON(&body)
+
+	if err := h.svc.Revoke(ctx, id, body.Reason); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
 			return
@@ -551,6 +566,16 @@ func (h *AgentHandler) ResolveAgent(c *gin.Context) {
 		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	if agent.Status == model.AgentStatusDeprecated {
+		c.Header("X-NAP-Deprecated", "true")
+		if agent.SunsetDate != nil {
+			c.Header("Sunset", agent.SunsetDate.Format(time.RFC1123))
+		}
+		if agent.ReplacementURI != "" {
+			c.Header("X-NAP-Replacement", agent.ReplacementURI)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -787,4 +812,216 @@ func (h *AgentHandler) ListMyAgents(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"agents": agents, "count": len(agents)})
+}
+
+// SuspendAgent handles POST /agents/:id/suspend — temporarily disables an agent.
+func (h *AgentHandler) SuspendAgent(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid agent ID"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	if !h.authorizeAgentAction(c, ctx, id, "suspend") {
+		return
+	}
+
+	if err := h.svc.Suspend(ctx, id); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "suspended"})
+}
+
+// RestoreAgent handles POST /agents/:id/restore — re-activates a suspended agent.
+func (h *AgentHandler) RestoreAgent(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid agent ID"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	if !h.authorizeAgentAction(c, ctx, id, "restore") {
+		return
+	}
+
+	if err := h.svc.Restore(ctx, id); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "active"})
+}
+
+// DeprecateAgent handles POST /agents/:id/deprecate — marks an agent as deprecated.
+func (h *AgentHandler) DeprecateAgent(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid agent ID"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	if !h.authorizeAgentAction(c, ctx, id, "deprecate") {
+		return
+	}
+
+	var req model.DeprecateRequest
+	_ = c.ShouldBindJSON(&req) // optional body
+
+	if err := h.svc.Deprecate(ctx, id, &req); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "deprecated"})
+}
+
+// GetCRL handles GET /crl — returns a JSON certificate revocation list.
+func (h *AgentHandler) GetCRL(c *gin.Context) {
+	agents, err := h.svc.ListRevokedCerts(c.Request.Context())
+	if err != nil {
+		h.logger.Error("list revoked certs", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list revoked certificates"})
+		return
+	}
+
+	type crlEntry struct {
+		CertSerial string `json:"cert_serial"`
+		Reason     string `json:"reason"`
+		RevokedAt  string `json:"revoked_at"`
+	}
+
+	entries := make([]crlEntry, 0, len(agents))
+	for _, a := range agents {
+		entries = append(entries, crlEntry{
+			CertSerial: a.CertSerial,
+			Reason:     a.RevocationReason,
+			RevokedAt:  a.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"entries":      entries,
+		"count":        len(entries),
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// BatchResolve handles POST /resolve/batch — resolves multiple URIs in one call.
+func (h *AgentHandler) BatchResolve(c *gin.Context) {
+	var req struct {
+		URIs []string `json:"uris" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(req.URIs) > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "maximum 100 URIs per batch"})
+		return
+	}
+
+	type batchResult struct {
+		URI      string `json:"uri"`
+		Endpoint string `json:"endpoint,omitempty"`
+		Status   string `json:"status,omitempty"`
+		Error    string `json:"error,omitempty"`
+	}
+
+	ctx := c.Request.Context()
+	results := make([]batchResult, len(req.URIs))
+	sem := make(chan struct{}, 10)
+	var wg sync.WaitGroup
+
+	for i, rawURI := range req.URIs {
+		wg.Add(1)
+		go func(idx int, u string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			parsed, err := uri.Parse(u)
+			if err != nil {
+				results[idx] = batchResult{URI: u, Error: "invalid URI: " + err.Error()}
+				return
+			}
+
+			agent, err := h.svc.Resolve(ctx, parsed.OrgName, parsed.Category, parsed.AgentID)
+			if err != nil {
+				results[idx] = batchResult{URI: u, Error: err.Error()}
+				return
+			}
+
+			results[idx] = batchResult{
+				URI:      u,
+				Endpoint: agent.Endpoint,
+				Status:   string(agent.Status),
+			}
+		}(i, rawURI)
+	}
+
+	wg.Wait()
+	c.JSON(http.StatusOK, gin.H{"results": results, "count": len(results)})
+}
+
+// ReportAbuseProxy is a placeholder route on the agent resource; the real handler
+// is wired by AbuseHandler after construction. This stub returns 501 if the abuse
+// system is not wired.
+func (h *AgentHandler) ReportAbuseProxy(c *gin.Context) {
+	c.JSON(http.StatusNotImplemented, gin.H{"error": "abuse reporting not configured"})
+}
+
+// authorizeAgentAction is a shared authorization helper for agent lifecycle actions
+// (suspend, restore, deprecate). Returns true if authorized, false if it wrote an error response.
+func (h *AgentHandler) authorizeAgentAction(c *gin.Context, ctx context.Context, id uuid.UUID, action string) bool {
+	agent, err := h.svc.Get(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+			return false
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get agent"})
+		return false
+	}
+
+	if h.tokens != nil || h.userTokens != nil {
+		agentClaims := identity.ClaimsFromCtx(c)
+		userClaims := userFromCtx(c)
+
+		authorized := false
+		if agentClaims != nil {
+			authorized = agentClaims.AgentURI == agent.URI() || identity.HasScope(agentClaims, "nexus:admin")
+		}
+		if !authorized && userClaims != nil && agent.OwnerUserID != nil {
+			uid, _ := uuid.Parse(userClaims.UserID)
+			authorized = *agent.OwnerUserID == uid
+		}
+
+		if !authorized {
+			if agentClaims == nil && userClaims == nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+				return false
+			}
+			c.JSON(http.StatusForbidden, gin.H{"error": "cannot " + action + " another agent's registration"})
+			return false
+		}
+	}
+
+	return true
 }

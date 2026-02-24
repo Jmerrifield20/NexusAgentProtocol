@@ -746,17 +746,122 @@ func (c *Client) CallAgentRaw(ctx context.Context, agentURI, method, path string
 }
 
 // RevokeAgent posts to POST /api/v1/agents/:id/revoke using the client's Bearer token.
-// The client must have been configured with WithBearerToken before calling this.
-func (c *Client) RevokeAgent(ctx context.Context, id string) error {
+// Pass an empty reason for no specific reason. The reason is included in the revocation record.
+func (c *Client) RevokeAgent(ctx context.Context, id, reason string) error {
+	var bodyReader io.Reader
+	if reason != "" {
+		payload, _ := json.Marshal(map[string]string{"reason": reason})
+		bodyReader = bytes.NewReader(payload)
+	}
+
 	url := c.registryBase + "/api/v1/agents/" + id + "/revoke"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bodyReader)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
+	}
+	if reason != "" {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
 
 	_, err = c.do(req)
 	return err
+}
+
+// SuspendAgent posts to POST /api/v1/agents/:id/suspend.
+func (c *Client) SuspendAgent(ctx context.Context, id string) error {
+	url := c.registryBase + "/api/v1/agents/" + id + "/suspend"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	_, err = c.do(req)
+	return err
+}
+
+// RestoreAgent posts to POST /api/v1/agents/:id/restore.
+func (c *Client) RestoreAgent(ctx context.Context, id string) error {
+	url := c.registryBase + "/api/v1/agents/" + id + "/restore"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	_, err = c.do(req)
+	return err
+}
+
+// CRLEntry represents a single entry in the certificate revocation list.
+type CRLEntry struct {
+	CertSerial string `json:"cert_serial"`
+	Reason     string `json:"reason"`
+	RevokedAt  string `json:"revoked_at"`
+}
+
+// CRLResponse is the response from GET /api/v1/crl.
+type CRLResponse struct {
+	Entries     []CRLEntry `json:"entries"`
+	Count       int        `json:"count"`
+	GeneratedAt string     `json:"generated_at"`
+}
+
+// GetCRL fetches the certificate revocation list from GET /api/v1/crl.
+func (c *Client) GetCRL(ctx context.Context) (*CRLResponse, error) {
+	url := c.registryBase + "/api/v1/crl"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	var result CRLResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decode CRL response: %w", err)
+	}
+	return &result, nil
+}
+
+// BatchResolveResult is a single result from a batch resolve call.
+type BatchResolveResult struct {
+	URI      string `json:"uri"`
+	Endpoint string `json:"endpoint,omitempty"`
+	Status   string `json:"status,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+// ResolveBatch posts to POST /api/v1/resolve/batch with multiple URIs.
+func (c *Client) ResolveBatch(ctx context.Context, uris []string) ([]BatchResolveResult, error) {
+	payload, err := json.Marshal(map[string][]string{"uris": uris})
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := c.registryBase + "/api/v1/resolve/batch"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Results []BatchResolveResult `json:"results"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("decode batch response: %w", err)
+	}
+	return resp.Results, nil
 }
 
 // do executes an HTTP request, attaching the Bearer token if present.

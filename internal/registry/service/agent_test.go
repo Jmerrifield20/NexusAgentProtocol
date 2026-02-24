@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmerrifield20/NexusAgentProtocol/internal/identity"
@@ -266,6 +267,96 @@ func (s *stubAgentRepo) CountActiveByOwnerUserID(_ context.Context, ownerUserID 
 
 func (s *stubAgentRepo) ListVerifiedDomainsByUserID(_ context.Context, ownerUserID uuid.UUID) ([]string, error) {
 	return nil, nil
+}
+
+func (s *stubAgentRepo) UpdateStatusWithReason(_ context.Context, id uuid.UUID, status model.AgentStatus, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.rows[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	a.Status = status
+	a.RevocationReason = reason
+	return nil
+}
+
+func (s *stubAgentRepo) Suspend(_ context.Context, id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.rows[id]
+	if !ok || a.Status != model.AgentStatusActive {
+		return repository.ErrNotFound
+	}
+	a.Status = model.AgentStatusSuspended
+	now := time.Now()
+	a.SuspendedAt = &now
+	return nil
+}
+
+func (s *stubAgentRepo) Restore(_ context.Context, id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.rows[id]
+	if !ok || a.Status != model.AgentStatusSuspended {
+		return repository.ErrNotFound
+	}
+	a.Status = model.AgentStatusActive
+	a.SuspendedAt = nil
+	return nil
+}
+
+func (s *stubAgentRepo) ListRevokedCerts(_ context.Context) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if a.Status == model.AgentStatusRevoked && a.CertSerial != "" {
+			cp := *a
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (s *stubAgentRepo) Deprecate(_ context.Context, id uuid.UUID, sunsetDate *time.Time, replacementURI string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.rows[id]
+	if !ok || a.Status != model.AgentStatusActive {
+		return repository.ErrNotFound
+	}
+	a.Status = model.AgentStatusDeprecated
+	now := time.Now()
+	a.DeprecatedAt = &now
+	a.SunsetDate = sunsetDate
+	a.ReplacementURI = replacementURI
+	return nil
+}
+
+func (s *stubAgentRepo) ListActiveEndpoints(_ context.Context) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if a.Status == model.AgentStatusActive && a.Endpoint != "" {
+			cp := *a
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (s *stubAgentRepo) UpdateHealthStatus(_ context.Context, id uuid.UUID, status string, lastSeenAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.rows[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	a.HealthStatus = status
+	a.LastSeenAt = &lastSeenAt
+	return nil
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -533,7 +624,7 @@ func TestRevoke_success(t *testing.T) {
 	agent, _ := svc.Register(context.Background(), testRegisterRequest())
 	svc.Activate(context.Background(), agent.ID)
 
-	if err := svc.Revoke(context.Background(), agent.ID); err != nil {
+	if err := svc.Revoke(context.Background(), agent.ID, ""); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
 
@@ -545,7 +636,7 @@ func TestRevoke_success(t *testing.T) {
 
 func TestRevoke_notFound(t *testing.T) {
 	svc := newTestAgentService(newStubAgentRepo(), nil, nil, nil)
-	err := svc.Revoke(context.Background(), uuid.New())
+	err := svc.Revoke(context.Background(), uuid.New(), "")
 	if err == nil {
 		t.Error("expected error for missing agent")
 	}
@@ -795,3 +886,151 @@ func TestRegister_domain_requiresOwnerDomain(t *testing.T) {
 		t.Error("expected error when owner_domain missing for domain registration")
 	}
 }
+
+// ── Revocation & Suspension Tests ────────────────────────────────────────
+
+func TestRevoke_withReason(t *testing.T) {
+	repo := newStubAgentRepo()
+	svc := newTestAgentService(repo, nil, nil, nil)
+
+	agent, _ := svc.Register(context.Background(), testRegisterRequest())
+	svc.Activate(context.Background(), agent.ID)
+
+	if err := svc.Revoke(context.Background(), agent.ID, "policy violation"); err != nil {
+		t.Fatalf("Revoke with reason: %v", err)
+	}
+
+	got, _ := svc.Get(context.Background(), agent.ID)
+	if got.Status != model.AgentStatusRevoked {
+		t.Errorf("expected revoked, got %s", got.Status)
+	}
+	if got.RevocationReason != "policy violation" {
+		t.Errorf("expected reason 'policy violation', got %q", got.RevocationReason)
+	}
+}
+
+func TestSuspend_activeToSuspended(t *testing.T) {
+	repo := newStubAgentRepo()
+	svc := newTestAgentService(repo, nil, nil, nil)
+
+	agent, _ := svc.Register(context.Background(), testRegisterRequest())
+	svc.Activate(context.Background(), agent.ID)
+
+	if err := svc.Suspend(context.Background(), agent.ID); err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+
+	got, _ := svc.Get(context.Background(), agent.ID)
+	if got.Status != model.AgentStatusSuspended {
+		t.Errorf("expected suspended, got %s", got.Status)
+	}
+	if got.SuspendedAt == nil {
+		t.Error("expected suspended_at to be set")
+	}
+}
+
+func TestRestore_suspendedToActive(t *testing.T) {
+	repo := newStubAgentRepo()
+	svc := newTestAgentService(repo, nil, nil, nil)
+
+	agent, _ := svc.Register(context.Background(), testRegisterRequest())
+	svc.Activate(context.Background(), agent.ID)
+	svc.Suspend(context.Background(), agent.ID)
+
+	if err := svc.Restore(context.Background(), agent.ID); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	got, _ := svc.Get(context.Background(), agent.ID)
+	if got.Status != model.AgentStatusActive {
+		t.Errorf("expected active, got %s", got.Status)
+	}
+	if got.SuspendedAt != nil {
+		t.Error("expected suspended_at to be cleared")
+	}
+}
+
+func TestRestore_failsOnRevoked(t *testing.T) {
+	repo := newStubAgentRepo()
+	svc := newTestAgentService(repo, nil, nil, nil)
+
+	agent, _ := svc.Register(context.Background(), testRegisterRequest())
+	svc.Activate(context.Background(), agent.ID)
+	svc.Revoke(context.Background(), agent.ID, "")
+
+	err := svc.Restore(context.Background(), agent.ID)
+	if err == nil {
+		t.Error("expected error restoring a revoked agent")
+	}
+}
+
+func TestSuspend_failsOnPending(t *testing.T) {
+	repo := newStubAgentRepo()
+	svc := newTestAgentService(repo, nil, nil, nil)
+
+	agent, _ := svc.Register(context.Background(), testRegisterRequest())
+
+	err := svc.Suspend(context.Background(), agent.ID)
+	if err == nil {
+		t.Error("expected error suspending a pending agent")
+	}
+}
+
+// ── Deprecation Tests ────────────────────────────────────────────────────
+
+func TestDeprecate_success(t *testing.T) {
+	repo := newStubAgentRepo()
+	svc := newTestAgentService(repo, nil, nil, nil)
+
+	agent, _ := svc.Register(context.Background(), testRegisterRequest())
+	svc.Activate(context.Background(), agent.ID)
+
+	req := &model.DeprecateRequest{
+		SunsetDate:     "2026-12-01",
+		ReplacementURI: "agent://example.com/finance/agent_new123",
+	}
+	if err := svc.Deprecate(context.Background(), agent.ID, req); err != nil {
+		t.Fatalf("Deprecate: %v", err)
+	}
+
+	got, _ := svc.Get(context.Background(), agent.ID)
+	if got.Status != model.AgentStatusDeprecated {
+		t.Errorf("expected deprecated, got %s", got.Status)
+	}
+	if got.ReplacementURI != "agent://example.com/finance/agent_new123" {
+		t.Errorf("unexpected replacement_uri: %q", got.ReplacementURI)
+	}
+}
+
+func TestResolve_deprecatedIncludesAgent(t *testing.T) {
+	repo := newStubAgentRepo()
+	svc := newTestAgentService(repo, nil, nil, nil)
+
+	agent, _ := svc.Register(context.Background(), testRegisterRequest())
+	svc.Activate(context.Background(), agent.ID)
+	svc.Deprecate(context.Background(), agent.ID, &model.DeprecateRequest{})
+
+	// Resolve should still return deprecated agents.
+	resolved, err := svc.Resolve(context.Background(), "example.com", "finance", agent.AgentID)
+	if err != nil {
+		t.Fatalf("Resolve deprecated: %v", err)
+	}
+	if resolved.Status != model.AgentStatusDeprecated {
+		t.Errorf("expected deprecated status, got %s", resolved.Status)
+	}
+}
+
+func TestDeprecate_failsOnPending(t *testing.T) {
+	repo := newStubAgentRepo()
+	svc := newTestAgentService(repo, nil, nil, nil)
+
+	agent, _ := svc.Register(context.Background(), testRegisterRequest())
+
+	err := svc.Deprecate(context.Background(), agent.ID, nil)
+	if err == nil {
+		t.Error("expected error deprecating a pending agent")
+	}
+}
+
+// Suppress unused import warning for time package.
+var _ = time.Now

@@ -91,7 +91,7 @@ func (s *FederationService) IssueIntermediateCA(ctx context.Context, trustRoot s
 		return nil, fmt.Errorf("registry %q must be active before issuing a CA cert (status: %s)", trustRoot, reg.Status)
 	}
 
-	issued, err := s.issuer.IssueIntermediateCert(trustRoot, 5*365*24*time.Hour)
+	issued, err := s.issuer.IssueIntermediateCert(trustRoot, 5*365*24*time.Hour, reg.MaxPathLen)
 	if err != nil {
 		return nil, fmt.Errorf("issue intermediate cert: %w", err)
 	}
@@ -111,12 +111,32 @@ func (s *FederationService) IssueIntermediateCA(ctx context.Context, trustRoot s
 	)
 
 	return &IssueCAResponse{
-		TrustRoot: trustRoot,
-		CertPEM:   issued.CertPEM,
-		KeyPEM:    issued.KeyPEM,
-		Serial:    issued.Serial,
-		ExpiresAt: issued.Cert.NotAfter.UTC().Format(time.RFC3339),
-		RootCAPEM: s.issuer.CACertPEM(),
-		Warning:   "Store the key_pem securely. It will not be shown again.",
+		TrustRoot:  trustRoot,
+		CertPEM:    issued.CertPEM,
+		KeyPEM:     issued.KeyPEM,
+		Serial:     issued.Serial,
+		ExpiresAt:  issued.Cert.NotAfter.UTC().Format(time.RFC3339),
+		RootCAPEM:  s.issuer.CACertPEM(),
+		MaxPathLen: reg.MaxPathLen,
+		Warning:    "Store the key_pem securely. It will not be shown again.",
 	}, nil
+}
+
+// UpdateMaxPathLen changes the sub-delegation depth for a registered registry.
+// The new value takes effect on the next CA re-issuance via IssueIntermediateCA.
+func (s *FederationService) UpdateMaxPathLen(ctx context.Context, id uuid.UUID, maxPathLen int) error {
+	if maxPathLen < 0 {
+		return fmt.Errorf("max_path_len must be >= 0 (got %d)", maxPathLen)
+	}
+	if maxPathLen > MaxAllowedPathLen {
+		return fmt.Errorf("max_path_len must be <= %d (got %d)", MaxAllowedPathLen, maxPathLen)
+	}
+	if err := s.repo.UpdateMaxPathLen(ctx, id, maxPathLen); err != nil {
+		return fmt.Errorf("update max_path_len: %w", err)
+	}
+	s.logger.Info("sub-delegation updated",
+		zap.String("id", id.String()),
+		zap.Int("max_path_len", maxPathLen),
+	)
+	return nil
 }
