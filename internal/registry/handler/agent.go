@@ -197,13 +197,16 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 // ListAgents handles GET /agents — returns paginated agent list.
 // Optional ?q= performs an inclusive partial-match search across name, description,
 // org, capability, agent_id, and tags. ?username= filters by agent owner username.
-// Without ?q= or ?username=, returns all agents filtered by the optional trust_root
+// ?skill= filters by exact skill ID match (indexed). ?tool= filters by exact MCP tool name (indexed).
+// Without any filter params, returns all agents filtered by the optional trust_root
 // and capability_node params.
 func (h *AgentHandler) ListAgents(c *gin.Context) {
 	q := strings.TrimSpace(c.Query("q"))
 	trustRoot := c.Query("trust_root")
 	capNode := c.Query("capability_node")
 	username := strings.TrimSpace(c.Query("username"))
+	skill := strings.TrimSpace(c.Query("skill"))
+	tool := strings.TrimSpace(c.Query("tool"))
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
@@ -220,6 +223,10 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	switch {
+	case skill != "":
+		agents, err = h.svc.SearchBySkill(ctx, skill, limit, offset)
+	case tool != "":
+		agents, err = h.svc.SearchByTool(ctx, tool, limit, offset)
 	case username != "":
 		agents, err = h.svc.ListActiveByUsername(ctx, username, limit, offset)
 	case q != "":

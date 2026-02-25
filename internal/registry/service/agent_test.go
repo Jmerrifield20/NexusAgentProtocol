@@ -359,6 +359,44 @@ func (s *stubAgentRepo) UpdateHealthStatus(_ context.Context, id uuid.UUID, stat
 	return nil
 }
 
+func (s *stubAgentRepo) SearchBySkill(_ context.Context, skillID string, limit, offset int) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if a.Status != model.AgentStatusActive {
+			continue
+		}
+		for _, id := range a.SkillIDs {
+			if id == skillID {
+				cp := *a
+				out = append(out, &cp)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *stubAgentRepo) SearchByTool(_ context.Context, toolName string, limit, offset int) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if a.Status != model.AgentStatusActive {
+			continue
+		}
+		for _, name := range a.ToolNames {
+			if name == toolName {
+				cp := *a
+				out = append(out, &cp)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 func newTestAgentService(repo *stubAgentRepo, issuer *identity.Issuer, ledger trustledger.Ledger, verifier service.DomainVerifier) *service.AgentService {
@@ -425,8 +463,9 @@ func TestRegister_setsURI(t *testing.T) {
 		t.Fatal(err)
 	}
 	uri := agent.URI()
-	// Format: agent://{owner_domain}/{category}/{agent_id}
-	if !strings.HasPrefix(uri, "agent://example.com/finance/agent_") {
+	// Format: agent://{owner_domain}/{category}/{primary_skill}/{agent_id}
+	// testRegisterRequest uses capability "finance>accounting", so primary_skill = "accounting".
+	if !strings.HasPrefix(uri, "agent://example.com/finance/accounting/agent_") {
 		t.Errorf("unexpected URI: %s", uri)
 	}
 }

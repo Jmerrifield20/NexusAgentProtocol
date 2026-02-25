@@ -35,7 +35,7 @@ Root CA (nexusagentprotocol.com)
 ├── Intermediate CA — acme.com
 │   ValidFor: 5 years    MaxPathLen: 0 (default — cannot issue further intermediates)
 │   │
-│   └── Leaf cert — agent://acme.com/finance/agent_xyz
+│   └── Leaf cert — agent://acme.com/finance/billing/agent_xyz
 │       ValidFor: 1 year
 │
 ├── Intermediate CA — gov.kr (sub-delegation enabled)
@@ -44,16 +44,16 @@ Root CA (nexusagentprotocol.com)
 │   ├── Sub-Intermediate CA — molit.go.kr
 │   │   ValidFor: 5 years    MaxPathLen: 0
 │   │   │
-│   │   └── Leaf cert — agent://molit.go.kr/transport/agent_abc
+│   │   └── Leaf cert — agent://molit.go.kr/transport/logistics/agent_abc
 │   │       ValidFor: 1 year
 │   │
 │   └── Leaf cert — agent://gov.kr/governance/agent_def
-│       ValidFor: 1 year
+│       ValidFor: 1 year   (top-level capability — 3-segment URI)
 │
 └── Intermediate CA — globalbank.io
     ValidFor: 5 years    MaxPathLen: 0
     │
-    └── Leaf cert — agent://globalbank.io/finance/agent_abc
+    └── Leaf cert — agent://globalbank.io/finance/reconciliation/agent_abc
         ValidFor: 1 year
 ```
 
@@ -127,7 +127,8 @@ An operator (e.g. `acme.com`) joins the federation in six steps:
 
 6. **Start** — The federated registry boots, loads the intermediate CA, and
    begins issuing leaf certs signed by the `acme.com` intermediate.
-   Agents receive URIs of the form `agent://acme.com/{category}/{agentID}`.
+   Agents receive URIs of the form `agent://acme.com/{category}/{primarySkill}/{agentID}`
+   (or the 3-segment form `agent://acme.com/{category}/{agentID}` when no skill is derived).
 
 ---
 

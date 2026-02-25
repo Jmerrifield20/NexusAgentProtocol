@@ -72,6 +72,8 @@ type agentRepo interface {
 	ListActiveByUsername(ctx context.Context, username string, limit, offset int) ([]*model.Agent, error)
 	SearchByOrg(ctx context.Context, orgName string, limit, offset int) ([]*model.Agent, error)
 	SearchByCapability(ctx context.Context, capability, orgName string, limit, offset int) ([]*model.Agent, error)
+	SearchBySkill(ctx context.Context, skillID string, limit, offset int) ([]*model.Agent, error)
+	SearchByTool(ctx context.Context, toolName string, limit, offset int) ([]*model.Agent, error)
 	Search(ctx context.Context, q string, limit, offset int) ([]*model.Agent, error)
 	CountByOwner(ctx context.Context, ownerUserID uuid.UUID) (int, error)
 	CountActiveByOwnerUserID(ctx context.Context, ownerUserID uuid.UUID) (int, error)
@@ -352,6 +354,11 @@ func (s *AgentService) Register(ctx context.Context, req *model.RegisterRequest)
 			agent.Metadata["_mcp_tools"] = string(b)
 		}
 	}
+
+	// Populate skill/tool search columns from declared skills and capability path.
+	agent.PrimarySkill = derivePrimarySkill(req.Skills, capability)
+	agent.SkillIDs = deriveSkillIDs(req.Skills, capability)
+	agent.ToolNames = deriveToolNames(req.MCPTools)
 
 	if err := s.repo.Create(ctx, agent); err != nil {
 		s.logger.Error("failed to create agent", zap.Error(err))
@@ -742,6 +749,16 @@ func (s *AgentService) LookupByCapability(ctx context.Context, capability, orgNa
 	return s.repo.SearchByCapability(ctx, capability, orgName, limit, offset)
 }
 
+// SearchBySkill returns active agents that declare the given skill ID.
+func (s *AgentService) SearchBySkill(ctx context.Context, skillID string, limit, offset int) ([]*model.Agent, error) {
+	return s.repo.SearchBySkill(ctx, skillID, limit, offset)
+}
+
+// SearchByTool returns active agents that expose the given MCP tool name.
+func (s *AgentService) SearchByTool(ctx context.Context, toolName string, limit, offset int) ([]*model.Agent, error) {
+	return s.repo.SearchByTool(ctx, toolName, limit, offset)
+}
+
 // Delete permanently removes an agent record.
 func (s *AgentService) Delete(ctx context.Context, id uuid.UUID) error {
 	return s.repo.Delete(ctx, id)
@@ -771,6 +788,61 @@ func normalizeCapability(cap string) string {
 	cap = strings.ReplaceAll(cap, "/", ">")
 	cap = strings.Trim(cap, ">")
 	return cap
+}
+
+// slugifySkillID converts a skill ID to a URI-safe slug (lowercase, spaces → hyphens).
+func slugifySkillID(id string) string {
+	id = strings.ToLower(strings.TrimSpace(id))
+	id = strings.ReplaceAll(id, " ", "-")
+	return id
+}
+
+// derivePrimarySkill returns the primary skill slug for the URI 4th segment.
+// Priority: first declared skill ID → last capability segment → "".
+func derivePrimarySkill(skills []agentcard.A2ASkill, cap string) string {
+	if len(skills) > 0 && skills[0].ID != "" {
+		return slugifySkillID(skills[0].ID)
+	}
+	// Derive from capability: use the last ">" segment when there are 2+ levels.
+	if idx := strings.LastIndex(cap, ">"); idx != -1 {
+		return cap[idx+1:]
+	}
+	return ""
+}
+
+// deriveSkillIDs returns all skill IDs to store in the indexed skill_ids column.
+// When no skills are declared, falls back to a single derived ID from the capability path.
+func deriveSkillIDs(skills []agentcard.A2ASkill, cap string) []string {
+	if len(skills) > 0 {
+		ids := make([]string, 0, len(skills))
+		for _, sk := range skills {
+			if sk.ID != "" {
+				ids = append(ids, slugifySkillID(sk.ID))
+			}
+		}
+		if len(ids) > 0 {
+			return ids
+		}
+	}
+	// Derive from capability when there are 2+ levels.
+	if idx := strings.LastIndex(cap, ">"); idx != -1 {
+		return []string{cap[idx+1:]}
+	}
+	return nil
+}
+
+// deriveToolNames extracts MCP tool names for the indexed tool_names column.
+func deriveToolNames(tools []mcpmanifest.MCPTool) []string {
+	if len(tools) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(tools))
+	for _, t := range tools {
+		if t.Name != "" {
+			names = append(names, t.Name)
+		}
+	}
+	return names
 }
 
 // generateAgentCard builds and returns a JSON-encoded A2A-compatible agent card

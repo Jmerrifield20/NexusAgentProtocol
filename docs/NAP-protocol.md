@@ -34,19 +34,28 @@ NAP is the only protocol that combines a central registry, DNS-01 domain ownersh
 Every NAP agent has a permanent, human-readable address:
 
 ```
-agent://nexusagentprotocol.com/ecommerce/retail/agent_7x2v9qaabbccdd
-         ────────  ────────────────  ──────────────────
-         trust      capability node    unique agent ID
-         root       (hierarchy)
+agent://acme.com/finance/reconcile-invoices/agent_7x2v9qaabbccdd
+         ───────  ───────  ─────────────────  ──────────────────
+         trust    category  primary skill       unique agent ID
+         root
 ```
 
 | Part | Meaning |
 |------|---------|
-| `nexusagentprotocol.com` | Trust root — the registry that issued the identity |
-| `ecommerce/retail` | Capability node — what the agent does (hierarchical) |
-| `agent_7x2v9q…` | Unique agent ID assigned at registration |
+| `acme.com` | Trust root — verified domain (or `nap` for free-hosted agents) |
+| `finance` | Category — top-level capability namespace |
+| `reconcile-invoices` | Primary skill — slugified skill ID, derived at registration |
+| `agent_7x2v9q…` | Agent ID — opaque unique identifier assigned at registration |
 
 The URI is permanent. The underlying endpoint (IP/URL) can change; the URI does not.
+
+When a meaningful sub-skill cannot be derived (top-level capability only), the 3-segment form is used:
+
+```
+agent://nap/assistant/agent_abc123
+```
+
+See the [NAP URI Standard](./spec/nap-uri-standard.md) for the full derivation rules.
 
 ### 2. The Registry
 
@@ -93,11 +102,11 @@ https://registry.nexusagentprotocol.com/.well-known/agent-card.json?domain=examp
   "updated_at": "2026-02-20T12:00:00Z",
   "agents": [
     {
-      "uri": "agent://nexusagentprotocol.com/ecommerce/retail/agent_7x2v9q",
+      "uri": "agent://acme.com/ecommerce/retail/agent_7x2v9q",
       "display_name": "Acme Store",
       "description": "Handles orders, inventory, and invoicing for Acme.",
-      "endpoint": "https://agents.example.com",
-      "capability_node": "ecommerce/retail",
+      "endpoint": "https://agents.acme.com",
+      "capability_node": "ecommerce>retail",
       "protocols": ["https"],
       "status": "active"
     }
@@ -187,7 +196,7 @@ func main() {
     // Call any other NAP agent — resolve + auth + call in one step
     var reply map[string]any
     err = c.CallAgent(ctx,
-        "agent://nexusagentprotocol.com/finance/billing/agent_7x2v9q",
+        "agent://acme.com/finance/billing/agent_7x2v9q",
         http.MethodPost, "/v1/invoice",
         map[string]any{"amount": 100, "currency": "USD"},
         &reply,
@@ -230,7 +239,10 @@ All endpoints are on the Nexus registry at `https://registry.nexusagentprotocol.
 |--------|------|------|-------------|
 | `GET` | `/.well-known/agent-card.json?domain=X` | None | List all active agents for a domain |
 | `GET` | `/api/v1/agents/:id` | None | Get agent details by UUID |
-| `GET` | `/api/v1/agents?trust_root=X&capability_node=Y` | None | Search agents |
+| `GET` | `/api/v1/agents?trust_root=X&capability_node=Y` | None | Filter agents by org / capability |
+| `GET` | `/api/v1/agents?skill=reconcile-invoices` | None | Find agents by declared skill ID (indexed) |
+| `GET` | `/api/v1/agents?tool=parse_invoice` | None | Find agents by MCP tool name (indexed) |
+| `GET` | `/api/v1/agents?q=billing` | None | Full-text search across name, description, tags |
 
 ### Agent Lifecycle
 
@@ -303,13 +315,13 @@ c, err := client.New("https://registry.nexusagentprotocol.com")
 c, err := client.NewFromCertDir(registryURL, "~/.nap/certs/yourdomain.com")
 
 // Resolve a URI to an endpoint
-result, err := c.Resolve(ctx, "agent://nexusagentprotocol.com/finance/billing/agent_7x2v9q")
-// result.Endpoint → "https://billing.example.com"
+result, err := c.Resolve(ctx, "agent://acme.com/finance/billing/agent_7x2v9q")
+// result.Endpoint → "https://billing.acme.com"
 
 // Batch resolve (up to 100 URIs)
 results, err := c.ResolveBatch(ctx, []string{
-    "agent://acme.com/finance/agent_1",
-    "agent://acme.com/legal/agent_2",
+    "agent://acme.com/finance/billing/agent_1",
+    "agent://acme.com/legal/contracts/agent_2",
 })
 
 // Call another agent (resolve + auth + HTTP in one step)
@@ -325,8 +337,8 @@ agent, err := c.RegisterAgent(ctx, client.RegisterAgentRequest{...})
 certs, err := c.ActivateAgent(ctx, agent.ID)
 // certs.PrivateKeyPEM is delivered once and never stored by the registry
 
-// List agents
-agents, err := c.ListAgents(ctx, "nexusagentprotocol.com", "ecommerce")
+// List agents by capability
+agents, err := c.ListAgents(ctx, "acme.com", "finance")
 
 // Lifecycle management
 err = c.RevokeAgent(ctx, agentID, "compromised credentials")  // with reason
@@ -372,35 +384,42 @@ This gives Claude four tools:
 
 ## Capability Node Taxonomy
 
-Capability nodes are hierarchical dot-separated paths. Use the most specific node that describes your agent:
+Capability nodes are hierarchical paths using `>` as separator (up to 3 levels).
+Use the most specific node that describes your agent — the last segment of your
+capability path automatically becomes your agent's `primary_skill` URI segment.
 
 ```
-assistant/
-  general          — general-purpose conversational assistant
-  coding           — software development assistant
-  research         — research and summarisation
+assistant>
+  general          — agent://nap/assistant/general/agent_xxx
+  coding           — agent://nap/assistant/coding/agent_xxx
+  research         — agent://nap/assistant/research/agent_xxx
 
-finance/
-  billing          — invoicing and payment processing
-  accounting       — bookkeeping and financial reporting
-  tax              — tax calculation and filing
+finance>
+  billing          — agent://nap/finance/billing/agent_xxx
+  accounting>
+    reconciliation — agent://nap/finance/reconciliation/agent_xxx
+  tax              — agent://nap/finance/tax/agent_xxx
 
-ecommerce/
-  retail           — product catalogue and storefront
-  orders           — order management and fulfilment
-  inventory        — stock management
+ecommerce>
+  retail           — agent://nap/ecommerce/retail/agent_xxx
+  orders           — agent://nap/ecommerce/orders/agent_xxx
+  inventory        — agent://nap/ecommerce/inventory/agent_xxx
 
-data/
-  analytics        — data analysis and reporting
-  etl              — data pipeline and transformation
+data>
+  analytics        — agent://nap/data/analytics/agent_xxx
+  etl              — agent://nap/data/etl/agent_xxx
 
-media/
-  image            — image generation and editing
-  video            — video generation and editing
-  audio            — audio generation and transcription
+media>
+  image            — agent://nap/media/image/agent_xxx
+  video            — agent://nap/media/video/agent_xxx
+  audio            — agent://nap/media/audio/agent_xxx
 ```
 
-Use the `--capability` flag in `nap claim` to set your node, e.g. `--capability assistant/general`.
+A top-level-only capability (e.g. `assistant`) produces a 3-segment URI
+(`agent://nap/assistant/agent_xxx`) with no primary skill. Provide a 2- or
+3-level path, or declare explicit skills at registration, to get the 4-segment form.
+
+Use the `--capability` flag in `nap claim` to set your node, e.g. `--capability finance>billing`.
 
 ---
 
@@ -457,7 +476,7 @@ The Nexus registry is a **pure phonebook**. Its job is to map `agent://` URIs to
 
 The only persistent data is:
 
-1. **Registration metadata** — agent URI, endpoint URL, capability node, display name, status
+1. **Registration metadata** — agent URI, endpoint URL, capability node, primary skill, skill IDs, MCP tool names, display name, status
 2. **Trust Ledger entries** — lifecycle events: `register`, `activate`, `revoke`, `suspend`, `restore`, `deprecate`, `update`
 3. **X.509 certificates** — the public cert issued at activation (private key is never stored)
 4. **User accounts** — email and password hash for free-tier hosted agents

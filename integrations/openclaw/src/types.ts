@@ -4,17 +4,24 @@
  * Adds an optional `nap` section to ~/.openclaw/openclaw.json that registers
  * the OpenClaw Gateway instance as a discoverable NAP agent.
  *
- * URI format (both paths):  agent://<org>/<category>/<agent-id>
+ * URI format — 4-segment (preferred):
+ *   agent://<trust_root>/<category>/<primary_skill>/<agent_id>
  *
- * Free hosted   → agent://nap/<category>/<id>
- *                 e.g.  agent://nap/assistant/0195fa3c-…
- *   ("nap" is the registry-controlled namespace — prevents username impersonation)
+ *   Free hosted     → agent://nap/<category>/<primary_skill>/<id>
+ *                     e.g.  agent://nap/finance/billing/agent_xxx
+ *   Domain-verified → agent://<owner-domain>/<category>/<primary_skill>/<id>
+ *                     e.g.  agent://acme.com/finance/billing/agent_xxx
  *
- * Domain-verified → agent://<owner-domain>/<category>/<id>
- *                   e.g.  agent://acme.com/finance/0195fa3c-…
+ * URI format — 3-segment (top-level capability only):
+ *   agent://<trust_root>/<category>/<agent_id>
+ *   e.g.  agent://nap/assistant/agent_xxx
  *
- * org       = "nap" (free-hosted) or the full owner domain, e.g. "acme.com" (domain-verified)
- * category  = top-level of capability path ("finance>accounting" → "finance" in URI)
+ * primary_skill is derived automatically from the capability path (last segment
+ * when 2+ levels) or from the first declared skill ID. Top-level-only capabilities
+ * (e.g. "assistant") produce the 3-segment form.
+ *
+ * trust_root = "nap" (free-hosted) or the full owner domain, e.g. "acme.com"
+ * category   = top-level of capability path ("finance>accounting" → "finance")
  */
 
 // ── Config (goes in ~/.openclaw/openclaw.json under "nap") ───────────────────
@@ -52,17 +59,42 @@ export interface NAPConfig {
   owner_domain?: string;
 
   /**
-   * Full capability path using ">" as separator between levels.
+   * Full capability path using ">" as separator between levels (up to 3 levels).
    * Required for both registration paths.
    * Examples: "assistant", "finance", "finance>accounting", "finance>accounting>reconciliation"
    *
-   * Only the top-level segment appears in the agent:// URI:
-   *   "finance>accounting" → agent://<org>/finance/<id>
+   * The top-level segment becomes the URI category; the last segment becomes
+   * the primary_skill URI segment (when 2+ levels are provided):
+   *   "finance>accounting"              → agent://nap/finance/accounting/agent_xxx
+   *   "finance>accounting>reconciliation" → agent://nap/finance/reconciliation/agent_xxx
+   *   "assistant"                       → agent://nap/assistant/agent_xxx (3-segment)
    *
-   * Sub-categories are indexed for search but not encoded in the address,
-   * keeping URIs stable as capability paths evolve.
+   * Providing a 2- or 3-level path is recommended — it makes your URI
+   * self-describing and enables structured skill-based discovery.
    */
   capability?: string;
+
+  /**
+   * Optional explicit A2A skill declarations. When provided, skills[0].id
+   * overrides the capability-derived primary_skill in the URI.
+   *
+   * Example:
+   *   [{ id: "reconcile-invoices", name: "Reconcile Invoices",
+   *      description: "Match purchase orders against invoices" }]
+   *
+   * If omitted, skills are auto-derived from the capability taxonomy.
+   */
+  skills?: Array<{ id: string; name: string; description?: string; tags?: string[] }>;
+
+  /**
+   * Optional MCP tool definitions this agent exposes. When provided, tool names
+   * are indexed for structured discovery via GET /agents?tool=<name>.
+   *
+   * Example:
+   *   [{ name: "parse_invoice", description: "Parse a PDF invoice into structured data",
+   *      inputSchema: { type: "object", properties: { url: { type: "string" } } } }]
+   */
+  mcp_tools?: Array<{ name: string; description: string; inputSchema?: unknown }>;
 }
 
 // ── Persisted state (written to ~/.openclaw/nap.json) ────────────────────────

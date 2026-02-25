@@ -75,6 +75,10 @@ type Agent struct {
 	DeprecatedAt   *time.Time `json:"deprecated_at,omitempty"   db:"deprecated_at"`
 	SunsetDate     *time.Time `json:"sunset_date,omitempty"     db:"sunset_date"`
 	ReplacementURI string     `json:"replacement_uri,omitempty" db:"replacement_uri"`
+	// Skill / tool search columns — denormalised from metadata for indexed lookup.
+	PrimarySkill string   `json:"primary_skill" db:"primary_skill"`
+	SkillIDs     []string `json:"skill_ids"     db:"skill_ids"`
+	ToolNames    []string `json:"tool_names"    db:"tool_names"`
 	// TrustTier is computed at read time from status, registration_type, and cert_serial.
 	// It is never stored in the database.
 	TrustTier TrustTier `json:"trust_tier" db:"-"`
@@ -86,17 +90,20 @@ type AgentMeta map[string]string
 // URI returns the agent:// URI for this agent.
 //
 // Format: agent://{org}/{category}/{agent_id}
-//   - org         is trust_root — the full verified domain for domain-verified agents
-//                 (e.g. "acme.com"), or "nap" for free-hosted agents.
-//   - category    is the top-level segment of capability_node  (e.g. "finance")
-//   - agent_id    is the unique opaque identifier
+//      or agent://{org}/{category}/{primary_skill}/{agent_id}   (when primary_skill is set)
 //
-// Subcategory detail (e.g. "finance>accounting>reconciliation") is intentionally
-// not encoded in the URI to keep addresses stable when capability paths evolve.
+//   - org           is trust_root — the full verified domain for domain-verified agents
+//                   (e.g. "acme.com"), or "nap" for free-hosted agents.
+//   - category      is the top-level segment of capability_node  (e.g. "finance")
+//   - primary_skill is the slugified primary skill identifier, set once at registration
+//   - agent_id      is the unique opaque identifier
 func (a *Agent) URI() string {
 	category := a.CapabilityNode
 	if idx := strings.Index(category, ">"); idx != -1 {
 		category = category[:idx]
+	}
+	if a.PrimarySkill != "" {
+		return "agent://" + a.TrustRoot + "/" + category + "/" + a.PrimarySkill + "/" + a.AgentID
 	}
 	return "agent://" + a.TrustRoot + "/" + category + "/" + a.AgentID
 }

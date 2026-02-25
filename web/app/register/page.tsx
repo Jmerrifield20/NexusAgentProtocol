@@ -528,6 +528,14 @@ function DnsSetupGuide({ domain }: { domain: string }) {
   );
 }
 
+// ---------- Helpers -------------------------------------------------------
+
+function derivePrimarySkill(capability: string): string {
+  if (!capability) return "";
+  const parts = capability.split(">");
+  return parts.length >= 2 ? parts[parts.length - 1] : "";
+}
+
 // ---------- Domain-Verified form ------------------------------------------
 
 function DomainVerifiedTab() {
@@ -536,7 +544,7 @@ function DomainVerifiedTab() {
   const [description, setDescription]       = useState("");
   const [endpoint, setEndpoint]             = useState("");
   const [ownerDomain, setOwnerDomain]       = useState("");
-  const [result, setResult] = useState<{ agent_id?: string; trust_root?: string; capability_node?: string } | null>(null);
+  const [result, setResult] = useState<{ agent_uri?: string; [key: string]: unknown } | null>(null);
   const [error, setError]   = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -569,9 +577,15 @@ function DomainVerifiedTab() {
     }
   };
 
-  const agentURI = result
-    ? `agent://${result.trust_root}/${result.capability_node?.split(">")[0]}/${result.agent_id}`
-    : "";
+  const agentURI = result?.agent_uri ?? "";
+
+  // Live URI preview while filling the form
+  const domainPreview = ownerDomain || "yourdomain.com";
+  const categoryPreview = capabilityNode ? capabilityNode.split(">")[0] : "{category}";
+  const skillPreview = derivePrimarySkill(capabilityNode);
+  const liveURIPreview = skillPreview
+    ? `agent://${domainPreview}/${categoryPreview}/${skillPreview}/…`
+    : `agent://${domainPreview}/${categoryPreview}/…`;
 
   return (
     <>
@@ -581,7 +595,7 @@ function DomainVerifiedTab() {
         <ul className="space-y-2 text-sm text-indigo-800">
           <li>
             <strong>Your brand in the URI.</strong> Your agent address becomes{" "}
-            <code className="font-mono text-xs bg-indigo-100 px-1 rounded">agent://yourcompany.com/finance/…</code>.
+            <code className="font-mono text-xs bg-indigo-100 px-1 rounded">agent://yourcompany.com/finance/billing/…</code>.
             Callers instantly know who owns it — no shared namespace.
           </li>
           <li>
@@ -609,6 +623,11 @@ function DomainVerifiedTab() {
         It takes about 5 minutes once your DNS records are in place.
       </p>
 
+      <div className="mb-6 rounded-lg bg-gray-50 border border-gray-200 px-4 py-3">
+        <p className="text-xs text-gray-400 mb-1">Your agent address will look like</p>
+        <code className="text-sm font-mono text-nexus-500">{liveURIPreview}</code>
+      </div>
+
       <form onSubmit={handleSubmit} className="space-y-5">
         {/* Capability */}
         <div>
@@ -618,7 +637,7 @@ function DomainVerifiedTab() {
           <CapabilityPicker value={capabilityNode} onChange={setCapabilityNode} required />
           <p className="mt-1 text-xs text-gray-400">
             Determines how other agents discover yours —{" "}
-            <code className="font-mono">agent://acme.com/finance/…</code>
+            <code className="font-mono">agent://acme.com/finance/accounting/…</code>
           </p>
         </div>
 
@@ -667,7 +686,7 @@ function DomainVerifiedTab() {
             className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm focus:border-nexus-500 focus:outline-none" />
           <p className="mt-1 text-xs text-gray-400">
             The domain you own. Becomes your trust root —{" "}
-            <code className="font-mono">agent://example.com/capability/…</code> — verified via a DNS TXT record.
+            <code className="font-mono">agent://example.com/finance/accounting/…</code> — verified via a DNS TXT record.
           </p>
           <DnsSetupGuide domain={ownerDomain} />
         </div>
@@ -730,11 +749,7 @@ function DomainVerifiedTab() {
 // ---------- NAP Hosted form ----------
 
 interface HostedResult {
-  id?: string;
-  trust_root?: string;
-  capability_node?: string;
-  agent_id?: string;
-  endpoint?: string;
+  agent_uri?: string;
   [key: string]: unknown;
 }
 
@@ -843,7 +858,10 @@ function FreeHostedTab() {
 
   const username = user?.username ?? "you";
   const topCategory = capability ? capability.split(">")[0] : "{category}";
-  const uriPreview = `agent://nap/${topCategory}/…`;
+  const primarySkill = derivePrimarySkill(capability);
+  const uriPreview = primarySkill
+    ? `agent://nap/${topCategory}/${primarySkill}/…`
+    : `agent://nap/${topCategory}/…`;
 
   return (
     <>
@@ -976,11 +994,11 @@ function FreeHostedTab() {
         <div className="mt-6 rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
           <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Agent Registered</p>
 
-          {result.trust_root && result.capability_node && result.agent_id && (
+          {result.agent_uri && (
             <div>
               <p className="text-xs font-medium text-gray-500 mb-1">Your agent address (URI)</p>
               <code className="block rounded-lg bg-gray-50 border border-gray-100 px-4 py-3 text-sm font-mono text-nexus-500 break-all">
-                agent://{result.trust_root}/{result.capability_node?.split(">")[0]}/{result.agent_id}
+                {result.agent_uri}
               </code>
               <p className="mt-1 text-xs text-gray-400">
                 This is your permanent address. Share it — other systems use it to find your agent.

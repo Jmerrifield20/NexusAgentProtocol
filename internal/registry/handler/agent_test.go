@@ -322,6 +322,44 @@ func (s *stubAgentRepo) UpdateHealthStatus(_ context.Context, id uuid.UUID, stat
 	return nil
 }
 
+func (s *stubAgentRepo) SearchBySkill(_ context.Context, skillID string, limit, offset int) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if a.Status != model.AgentStatusActive {
+			continue
+		}
+		for _, id := range a.SkillIDs {
+			if id == skillID {
+				cp := *a
+				out = append(out, &cp)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *stubAgentRepo) SearchByTool(_ context.Context, toolName string, limit, offset int) ([]*model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*model.Agent
+	for _, a := range s.rows {
+		if a.Status != model.AgentStatusActive {
+			continue
+		}
+		for _, name := range a.ToolNames {
+			if name == toolName {
+				cp := *a
+				out = append(out, &cp)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 func (s *stubAgentRepo) Search(_ context.Context, q string, limit, offset int) ([]*model.Agent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

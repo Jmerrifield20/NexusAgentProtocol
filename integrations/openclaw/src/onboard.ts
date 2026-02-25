@@ -46,9 +46,13 @@ export async function onboardWizard(
 
     if (!hasExistingDomain) {
       log('Registration type:');
-      log('  1) Free hosted  — agent://nap/<capability>/<id>');
-      log('  2) Domain-verified — agent://<your-domain>/<capability>/<id>');
+      log('  1) Free hosted      — agent://nap/<category>/<skill>/<id>');
+      log('                        e.g.  agent://nap/finance/billing/agent_xxx');
+      log('  2) Domain-verified  — agent://<your-domain>/<category>/<skill>/<id>');
+      log('                        e.g.  agent://acme.com/finance/billing/agent_xxx');
       log('');
+      log('The <skill> segment is derived from your capability path (last level).');
+      log('Use a 2- or 3-level capability (e.g. finance>billing) for a self-describing URI.');
       const choice = await rl.question('Choose [1]: ');
       registrationType = choice.trim() === '2' ? 'domain' : 'hosted';
     } else {
@@ -89,7 +93,8 @@ export async function onboardWizard(
       const domain =
         config.owner_domain ?? (await rl.question('Owner domain (e.g. acme.com): '));
       const capabilityRaw =
-        config.capability ?? (await rl.question('Capability node [assistant]: '));
+        config.capability ??
+        (await rl.question('Capability node [assistant] (e.g. finance>billing): '));
       const capability = capabilityRaw || 'assistant';
 
       napConfig.owner_domain = domain;

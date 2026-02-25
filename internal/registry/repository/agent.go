@@ -44,17 +44,28 @@ func (r *AgentRepository) Create(ctx context.Context, agent *model.Agent) error 
 	}
 	agent.TrustTier = agent.ComputeTrustTier()
 
+	skillIDs := agent.SkillIDs
+	if skillIDs == nil {
+		skillIDs = []string{}
+	}
+	toolNames := agent.ToolNames
+	if toolNames == nil {
+		toolNames = []string{}
+	}
+
 	query := `
 		INSERT INTO agents (
 			id, trust_root, capability_node, agent_id, display_name,
 			description, endpoint, owner_domain, status, cert_serial,
 			public_key_pem, metadata, created_at, updated_at, expires_at,
-			owner_user_id, registration_type
+			owner_user_id, registration_type,
+			primary_skill, skill_ids, tool_names
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9, $10,
 			$11, $12, $13, $14, $15,
-			$16, $17
+			$16, $17,
+			$18, $19, $20
 		)`
 
 	_, err = r.db.Exec(ctx, query,
@@ -63,6 +74,7 @@ func (r *AgentRepository) Create(ctx context.Context, agent *model.Agent) error 
 		agent.Status, agent.CertSerial, agent.PublicKeyPEM, meta,
 		agent.CreatedAt, agent.UpdatedAt, agent.ExpiresAt,
 		agent.OwnerUserID, agent.RegistrationType,
+		agent.PrimarySkill, skillIDs, toolNames,
 	)
 	return err
 }
@@ -578,6 +590,74 @@ func (r *AgentRepository) UpdateHealthStatus(ctx context.Context, id uuid.UUID, 
 	return nil
 }
 
+// SearchBySkill returns active agents that declare the given skill ID.
+// Results are ordered by trust tier (domain+cert > domain > nap_hosted) then newest first.
+func (r *AgentRepository) SearchBySkill(ctx context.Context, skillID string, limit, offset int) ([]*model.Agent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := `
+		SELECT * FROM agents
+		WHERE $1 = ANY(skill_ids) AND status = 'active'
+		ORDER BY
+		  CASE
+		    WHEN cert_serial != '' AND registration_type = 'domain' THEN 1
+		    WHEN registration_type = 'domain'                        THEN 2
+		    ELSE 3
+		  END,
+		  created_at DESC
+		LIMIT $2 OFFSET $3`
+
+	rows, err := r.db.Query(ctx, query, skillID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var agents []*model.Agent
+	for rows.Next() {
+		a, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
+// SearchByTool returns active agents that expose the given MCP tool name.
+// Results are ordered by trust tier then newest first.
+func (r *AgentRepository) SearchByTool(ctx context.Context, toolName string, limit, offset int) ([]*model.Agent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := `
+		SELECT * FROM agents
+		WHERE $1 = ANY(tool_names) AND status = 'active'
+		ORDER BY
+		  CASE
+		    WHEN cert_serial != '' AND registration_type = 'domain' THEN 1
+		    WHEN registration_type = 'domain'                        THEN 2
+		    ELSE 3
+		  END,
+		  created_at DESC
+		LIMIT $2 OFFSET $3`
+
+	rows, err := r.db.Query(ctx, query, toolName, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var agents []*model.Agent
+	for rows.Next() {
+		a, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
 // scanOne executes a query returning a single agent row.
 func (r *AgentRepository) scanOne(ctx context.Context, query string, args ...any) (*model.Agent, error) {
 	rows, err := r.db.Query(ctx, query, args...)
@@ -612,6 +692,7 @@ func (r *AgentRepository) scan(rows pgx.Rows) (*model.Agent, error) {
 		&a.LastSeenAt, &a.HealthStatus,
 		&a.RevocationReason, &a.SuspendedAt,
 		&a.DeprecatedAt, &a.SunsetDate, &a.ReplacementURI,
+		&a.PrimarySkill, &a.SkillIDs, &a.ToolNames,
 	)
 	if err != nil {
 		return nil, err
