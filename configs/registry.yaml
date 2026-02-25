@@ -33,6 +33,9 @@ health:
   probe_timeout: "10s"
   fail_threshold: 3
 
+validation_authority:
+  enabled: false  # health checker, webhooks, abuse reporting (off by default)
+
 trust_ledger:
   enabled: true
 

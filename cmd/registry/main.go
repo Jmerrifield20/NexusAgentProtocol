@@ -78,6 +78,7 @@ func run(logger *zap.Logger) error {
 	viper.SetDefault("health.check_interval", "5m")
 	viper.SetDefault("health.probe_timeout", "10s")
 	viper.SetDefault("health.fail_threshold", 3)
+	viper.SetDefault("validation_authority.enabled", false)
 
 	if err := viper.ReadInConfig(); err != nil {
 		var cfgNotFound viper.ConfigFileNotFoundError
@@ -296,16 +297,27 @@ func run(logger *zap.Logger) error {
 	userProfileHandler := handler.NewUserHandler(userSvc, svc, logger)
 	userProfileHandler.SetUserTokenIssuer(userTokens)
 
-	// Abuse reporting
-	abuseRepo := repository.NewAbuseReportRepository(db)
-	abuseHandler := handler.NewAbuseHandler(abuseRepo, userTokens, logger)
+	// ── Validation Authority (opt-in) ────────────────────────────────────────
+	var abuseHandler *handler.AbuseHandler
+	var webhookHandler *webhooks.Handler
+	var webhookSvc *webhooks.Service
 
-	// Webhook events
-	webhookRepo := webhooks.NewRepository(db)
-	webhookSvc := webhooks.NewService(webhookRepo, logger)
-	webhookSvc.SetMetricsRecorder(handler.RecordWebhookDelivery)
-	webhookHandler := webhooks.NewHandler(webhookSvc, userTokens, logger)
-	svc.SetWebhookDispatcher(webhookSvc)
+	if viper.GetBool("validation_authority.enabled") {
+		logger.Info("validation authority enabled: health checker, webhooks, abuse reporting")
+
+		// Abuse reporting
+		abuseRepo := repository.NewAbuseReportRepository(db)
+		abuseHandler = handler.NewAbuseHandler(abuseRepo, userTokens, logger)
+
+		// Webhook events
+		webhookRepo := webhooks.NewRepository(db)
+		webhookSvc = webhooks.NewService(webhookRepo, logger)
+		webhookSvc.SetMetricsRecorder(handler.RecordWebhookDelivery)
+		webhookHandler = webhooks.NewHandler(webhookSvc, userTokens, logger)
+		svc.SetWebhookDispatcher(webhookSvc)
+	} else {
+		logger.Info("validation authority disabled (set validation_authority.enabled=true to enable)")
+	}
 
 	// Wire metrics recording for ledger appends.
 	service.SetLedgerAppendMetrics(handler.RecordLedgerAppend)
@@ -376,8 +388,12 @@ func run(logger *zap.Logger) error {
 	dnsHandler.Register(v1)
 	authHandler.Register(v1)
 	userProfileHandler.Register(v1)
-	abuseHandler.Register(v1)
-	webhookHandler.Register(v1)
+	if abuseHandler != nil {
+		abuseHandler.Register(v1)
+	}
+	if webhookHandler != nil {
+		webhookHandler.Register(v1)
+	}
 	if fedHandler != nil {
 		fedHandler.Register(v1)
 	}
@@ -407,21 +423,23 @@ func run(logger *zap.Logger) error {
 		}
 	}()
 
-	// ── Background: health checker ──────────────────────────────────────────
-	healthCheckInterval, _ := time.ParseDuration(viper.GetString("health.check_interval"))
-	healthProbeTimeout, _ := time.ParseDuration(viper.GetString("health.probe_timeout"))
-	healthCfg := health.Config{
-		CheckInterval: healthCheckInterval,
-		ProbeTimeout:  healthProbeTimeout,
-		FailThreshold: viper.GetInt("health.fail_threshold"),
+	// ── Background: health checker (only when validation authority is enabled) ─
+	if viper.GetBool("validation_authority.enabled") {
+		healthCheckInterval, _ := time.ParseDuration(viper.GetString("health.check_interval"))
+		healthProbeTimeout, _ := time.ParseDuration(viper.GetString("health.probe_timeout"))
+		healthCfg := health.Config{
+			CheckInterval: healthCheckInterval,
+			ProbeTimeout:  healthProbeTimeout,
+			FailThreshold: viper.GetInt("health.fail_threshold"),
+		}
+		healthAdapter := &healthServiceAdapter{svc: svc}
+		checker := health.New(healthAdapter, healthAdapter, healthCfg, logger)
+		checker.SetMetricsRecord(handler.RecordHealthCheck)
+		checker.SetWebhookDispatch(func(ctx context.Context, eventType string, payload map[string]string) {
+			webhookSvc.Dispatch(ctx, eventType, payload)
+		})
+		go checker.Start(quit)
 	}
-	healthAdapter := &healthServiceAdapter{svc: svc}
-	checker := health.New(healthAdapter, healthAdapter, healthCfg, logger)
-	checker.SetMetricsRecord(handler.RecordHealthCheck)
-	checker.SetWebhookDispatch(func(ctx context.Context, eventType string, payload map[string]string) {
-		webhookSvc.Dispatch(ctx, eventType, payload)
-	})
-	go checker.Start(quit)
 
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", httpPort),
