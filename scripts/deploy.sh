@@ -18,6 +18,9 @@
 
 set -euo pipefail
 
+# Ensure Go is on PATH (not set in non-interactive SSH sessions)
+export PATH=$PATH:/usr/local/go/bin
+
 # ── Config ────────────────────────────────────────────────────────────────────
 REPO_DIR="${REPO_DIR:-$HOME/NexusAgentProtocol}"
 REGISTRY_BINARY=/usr/local/bin/nap-registry
@@ -73,7 +76,8 @@ if [[ $SKIP_MIGRATE -eq 0 ]]; then
     export DATABASE_URL=\$(gcloud secrets versions access latest --secret=registry-db-url)"
 
   log "Building migration binary..."
-  go build -o "$MIGRATE_BINARY" ./cmd/migrate
+  go build -o /tmp/nap-migrate ./cmd/migrate
+  sudo mv /tmp/nap-migrate "$MIGRATE_BINARY"
 
   log "Running migrations..."
   "$MIGRATE_BINARY" up
@@ -83,7 +87,8 @@ fi
 
 # ── 3. Build + restart API ────────────────────────────────────────────────────
 log "Building registry binary..."
-go build -o "$REGISTRY_BINARY" ./cmd/registry
+go build -o /tmp/nap-registry ./cmd/registry
+sudo mv /tmp/nap-registry "$REGISTRY_BINARY"
 
 log "Restarting nap-registry..."
 sudo systemctl restart nap-registry
