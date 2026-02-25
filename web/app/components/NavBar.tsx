@@ -34,6 +34,9 @@ export default function NavBar() {
           <a href="/developers" className="hover:text-nexus-500">
             Developers
           </a>
+          <a href="/federation" className="hover:text-nexus-500">
+            Federation
+          </a>
           <a
             href="https://github.com/jmerrifield20/NexusAgentProtocol"
             className="rounded-md bg-nexus-500 px-4 py-2 text-white hover:bg-indigo-600"
