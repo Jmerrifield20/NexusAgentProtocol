@@ -94,21 +94,29 @@ export default function ResolvePage() {
           agent://
           <span className="text-indigo-600">acme.com</span>/
           <span className="text-emerald-600">finance</span>/
+          <span className="text-violet-600">billing</span>/
           <span className="text-amber-600">agent_7x2v9q</span>
         </code>
-        <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-4">
           <div className="flex items-start gap-2">
             <span className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full bg-indigo-400" />
             <div>
-              <p className="font-semibold text-gray-700">Owner Domain</p>
-              <p className="text-gray-500">The domain verified at registration.</p>
+              <p className="font-semibold text-gray-700">Trust Root</p>
+              <p className="text-gray-500">The domain (or <code className="font-mono">nap</code>) verified at registration.</p>
             </div>
           </div>
           <div className="flex items-start gap-2">
             <span className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-400" />
             <div>
-              <p className="font-semibold text-gray-700">Capability Node</p>
-              <p className="text-gray-500">The category the agent belongs to.</p>
+              <p className="font-semibold text-gray-700">Category</p>
+              <p className="text-gray-500">Top-level capability (e.g. finance).</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-2">
+            <span className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full bg-violet-400" />
+            <div>
+              <p className="font-semibold text-gray-700">Primary Skill</p>
+              <p className="text-gray-500">Specific skill (e.g. billing). Omitted for top-level-only agents.</p>
             </div>
           </div>
           <div className="flex items-start gap-2">

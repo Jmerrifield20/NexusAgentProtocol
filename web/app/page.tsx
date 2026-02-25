@@ -96,7 +96,7 @@ export default function HomePage() {
             {/* Agent A */}
             <rect x="28" y="72" width="158" height="72" rx="10" fill="white" stroke="#e0e7ff" strokeWidth="1.5" filter="url(#f1s)"/>
             <text x="107" y="104" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="13" fontWeight="600" fill="#1e1b4b">Agent A</text>
-            <text x="107" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">agent://acme.com/finance/…</text>
+            <text x="107" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">agent://acme.com/finance/billing/…</text>
 
             {/* Nexus Registry */}
             <rect x="311" y="52" width="158" height="112" rx="10" fill="#1e1b4b" filter="url(#f1g)"/>
@@ -108,7 +108,7 @@ export default function HomePage() {
             {/* Agent B */}
             <rect x="594" y="72" width="158" height="72" rx="10" fill="white" stroke="#e0e7ff" strokeWidth="1.5" filter="url(#f1s)"/>
             <text x="673" y="104" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="13" fontWeight="600" fill="#1e1b4b">Agent B</text>
-            <text x="673" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">agent://nexus.io/finance/…</text>
+            <text x="673" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">agent://nexus.io/finance/billing/…</text>
 
             {/* A → Registry: register */}
             <line x1="188" y1="100" x2="309" y2="100" stroke="#4f46e5" strokeWidth="1.5" strokeDasharray="5,3" markerEnd="url(#m1i)"/>
@@ -165,7 +165,7 @@ export default function HomePage() {
             {/* Agent A */}
             <rect x="28" y="72" width="158" height="72" rx="10" fill="white" stroke="#e0e7ff" strokeWidth="1.5" filter="url(#f2s)"/>
             <text x="107" y="104" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="13" fontWeight="600" fill="#1e1b4b">Agent A</text>
-            <text x="107" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">agent://acme.com/finance/…</text>
+            <text x="107" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">agent://acme.com/finance/billing/…</text>
 
             {/* Nexus Registry */}
             <rect x="311" y="52" width="158" height="112" rx="10" fill="#1e1b4b" filter="url(#f2g)"/>
@@ -177,7 +177,7 @@ export default function HomePage() {
             {/* Agent B */}
             <rect x="594" y="72" width="158" height="72" rx="10" fill="white" stroke="#e0e7ff" strokeWidth="1.5" filter="url(#f2s)"/>
             <text x="673" y="104" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="13" fontWeight="600" fill="#1e1b4b">Agent B</text>
-            <text x="673" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">agent://nexus.io/finance/…</text>
+            <text x="673" y="122" textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="10" fill="#94a3b8">agent://nexus.io/finance/billing/…</text>
 
             {/* ① A → Registry: resolve */}
             <line x1="188" y1="100" x2="309" y2="100" stroke="#4f46e5" strokeWidth="1.5" markerEnd="url(#m2i)"/>
@@ -238,32 +238,37 @@ export default function HomePage() {
       <section className="rounded-xl border border-gray-200 bg-gray-50 p-8">
         <h2 className="mb-2 text-2xl font-bold text-gray-900">What does an agent address look like?</h2>
         <p className="mb-6 text-gray-500 text-sm">
-          Every registered agent gets a URI with three segments:
+          Every registered agent gets a URI with up to four segments:
         </p>
         <code className="block text-lg font-mono text-gray-800 mb-6">
           agent://
           <span className="text-indigo-600">acme.com</span>/
           <span className="text-emerald-600">finance</span>/
+          <span className="text-violet-600">billing</span>/
           <span className="text-amber-600">agent_7x2v9q</span>
         </code>
-        <div className="grid gap-4 sm:grid-cols-3 text-sm">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 text-sm">
           <div className="rounded-lg border border-indigo-100 bg-white p-4">
             <p className="font-semibold text-indigo-600 mb-1">acme.com <span className="text-xs font-normal text-gray-400">(or <code className="font-mono">nap</code>)</span></p>
             <p className="text-gray-500">
-              The org — who owns this agent. For <strong>domain-verified</strong> agents this is the
+              The trust root — who owns this agent. For <strong>domain-verified</strong> agents this is the
               full verified domain, proven by DNS-01 challenge. Only the owner of <code className="font-mono text-xs">acme.com</code> can
-              claim <code className="font-mono text-xs">acme.com</code> — <code className="font-mono text-xs">acme.io</code> gets a different address.
+              claim <code className="font-mono text-xs">acme.com</code>.
               For <strong>free-hosted</strong> agents this is always <code className="font-mono text-xs">nap</code>
               — a registry-controlled namespace that prevents impersonation.
             </p>
           </div>
           <div className="rounded-lg border border-emerald-100 bg-white p-4">
             <p className="font-semibold text-emerald-600 mb-1">finance</p>
-            <p className="text-gray-500">The top-level capability category from the NAP taxonomy. Tells callers what kind of task this agent handles. Sub-categories (e.g. <code className="font-mono text-xs">finance &gt; accounting</code>) are searchable but don&apos;t appear in the URI — keeping addresses stable as capability paths evolve.</p>
+            <p className="text-gray-500">The top-level capability category. Tells callers what domain this agent operates in. Derived from the first level of the capability path (e.g. <code className="font-mono text-xs">finance &gt; accounting</code> → <code className="font-mono text-xs">finance</code>).</p>
+          </div>
+          <div className="rounded-lg border border-violet-100 bg-white p-4">
+            <p className="font-semibold text-violet-600 mb-1">billing</p>
+            <p className="text-gray-500">The primary skill — what specific task this agent handles. Derived from the last level of the capability path. Omitted for top-level-only capabilities, giving a 3-segment URI.</p>
           </div>
           <div className="rounded-lg border border-amber-100 bg-white p-4">
             <p className="font-semibold text-amber-600 mb-1">agent_7x2v9q</p>
-            <p className="text-gray-500">A unique ID assigned at registration. Never changes — even if the agent moves servers, gets a new domain, or changes capability sub-categories.</p>
+            <p className="text-gray-500">A unique ID assigned at registration. Never changes — even if the agent moves servers, gets a new domain, or updates its capabilities.</p>
           </div>
         </div>
       </section>
@@ -306,7 +311,7 @@ export default function HomePage() {
           {`go get github.com/jmerrifield20/NexusAgentProtocol/pkg/client
 
 c, _ := client.New("https://registry.nexusagentprotocol.com")
-result, err := c.Resolve(ctx, "agent://acme.com/finance/agent_7x2v9q")
+result, err := c.Resolve(ctx, "agent://acme.com/finance/billing/agent_7x2v9q")
 fmt.Println(result.Endpoint) // https://api.acme.com/agents/tax-bot`}
         </pre>
       </section>

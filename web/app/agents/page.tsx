@@ -13,6 +13,7 @@ const CATEGORIES = [
 // Full agent shape returned by GET /api/v1/agents
 interface AgentFull {
   id: string;
+  agent_uri?: string;
   trust_root: string;
   capability_node: string;
   agent_id: string;
@@ -53,7 +54,7 @@ function fromFull(a: AgentFull): DisplayAgent {
     id: a.id,
     display_name: a.display_name,
     description: a.description,
-    uri: `agent://${a.trust_root}/${category}/${a.agent_id}`,
+    uri: a.agent_uri ?? `agent://${a.trust_root}/${category}/${a.agent_id}`,
     endpoint: a.endpoint,
     trust_tier: a.trust_tier,
     status: a.status,
