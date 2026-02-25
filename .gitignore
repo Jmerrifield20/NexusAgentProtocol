@@ -35,3 +35,6 @@ web/tsconfig.tsbuildinfo
 
 # Deployment notes (local only, never commit)
 deploy/
+
+# Claude Code project instructions (local only)
+CLAUDE.md
