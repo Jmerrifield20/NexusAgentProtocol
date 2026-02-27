@@ -181,6 +181,7 @@ func run(logger *zap.Logger) error {
 	userSvc := users.NewUserService(userRepo, mailer, issuerURL, logger)
 	userSvc.SetFrontendURL(viper.GetString("registry.frontend_url"))
 	svc.SetEmailChecker(userSvc)
+	svc.SetOwnerInfoFetcher(userSvc)
 
 	// OAuth provider configs
 	oauthCfgs := map[string]handler.OAuthProviderConfig{

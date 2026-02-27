@@ -8,7 +8,7 @@
 
 NAP is a protocol that gives AI agents a stable, verifiable identity on the internet — similar to how domains identify websites, but for agents. It answers three questions that no existing protocol does together:
 
-1. **Who is this agent?** — verified domain ownership, X.509 certificate
+1. **Who is this agent?** — verified identity (DNS-01 domain ownership for org agents; email verification for personal agents), X.509 certificate issued by the Nexus CA
 2. **Where does it live?** — resolvable `agent://` URI → HTTPS endpoint
 3. **Is it authorised to call me?** — mTLS + scoped JWT Task Tokens
 

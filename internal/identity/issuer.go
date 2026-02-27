@@ -152,12 +152,23 @@ func (i *Issuer) IssueIntermediateCert(org string, validFor time.Duration, maxPa
 
 // IssueAgentCert issues an X.509 certificate for an agent identity.
 //
-// The certificate contains:
-//   - Subject CN: ownerDomain
-//   - URI SAN: agentURI  (e.g. agent://nexusagentprotocol.com/finance/taxes/agent_xyz)
-//   - DNS SAN: ownerDomain
+// ownerCN is the Subject Common Name — for domain-verified agents this is the
+// verified domain (e.g. "acme.com"); for NAP-hosted personal agents this is
+// the user's chosen display name (e.g. "Jack Merrifield").
+//
+// ownerEmail, when non-empty, is embedded as an Email SAN and signals a
+// NAP-hosted (email-verified) agent. In this mode no DNS SAN is added because
+// there is no domain under the owner's control to put there.
+// When ownerEmail is empty the certificate behaves as a domain-verified cert:
+// the CN is also added as a DNS SAN.
+//
+// The certificate always contains:
+//   - Subject CN: ownerCN
+//   - URI SAN:    agentURI  (e.g. agent://nap/finance/taxes/agent_xyz)
+//   - DNS SAN:    ownerCN  (domain-verified only, omitted when ownerEmail is set)
+//   - Email SAN:  ownerEmail (NAP-hosted only, omitted when empty)
 //   - EKU: ClientAuth + ServerAuth
-func (i *Issuer) IssueAgentCert(agentURI, ownerDomain string, validFor time.Duration) (*IssuedCert, error) {
+func (i *Issuer) IssueAgentCert(agentURI, ownerCN string, validFor time.Duration, ownerEmail string) (*IssuedCert, error) {
 	if err := i.checkSigning(); err != nil {
 		return nil, err
 	}
@@ -184,7 +195,7 @@ func (i *Issuer) IssueAgentCert(agentURI, ownerDomain string, validFor time.Dura
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   ownerDomain,
+			CommonName:   ownerCN,
 			Organization: []string{"Nexus Agent Protocol"},
 		},
 		NotBefore:   now.Add(-time.Minute),
@@ -192,10 +203,28 @@ func (i *Issuer) IssueAgentCert(agentURI, ownerDomain string, validFor time.Dura
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 		URIs:        []*url.URL{uriSAN},
-		DNSNames:    []string{ownerDomain},
+	}
+
+	if ownerEmail != "" {
+		// NAP-hosted personal agent: bind the verified email address.
+		template.EmailAddresses = []string{ownerEmail}
+	} else {
+		// Domain-verified agent: the CN is a DNS hostname the owner controls.
+		template.DNSNames = []string{ownerCN}
 	}
 
 	return i.sign(template, &agentKey.PublicKey, agentKey)
+}
+
+// AgentOwnerEmailFromCert extracts the verified owner email address from a
+// NAP-hosted agent certificate's Email SANs. Returns an empty string (no
+// error) when the certificate carries no email SAN — this is expected for
+// domain-verified agents.
+func AgentOwnerEmailFromCert(cert *x509.Certificate) string {
+	if len(cert.EmailAddresses) > 0 {
+		return cert.EmailAddresses[0]
+	}
+	return ""
 }
 
 // IssueServerCert issues a TLS server certificate for the registry itself.

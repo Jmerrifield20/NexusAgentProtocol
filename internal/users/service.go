@@ -183,6 +183,16 @@ func (s *UserService) IsEmailVerified(ctx context.Context, userID uuid.UUID) (bo
 	return u.EmailVerified, nil
 }
 
+// GetOwnerInfo returns the display name and email for a user by ID.
+// Satisfies the registry service.OwnerInfoFetcher interface.
+func (s *UserService) GetOwnerInfo(ctx context.Context, userID uuid.UUID) (displayName, email string, err error) {
+	u, err := s.repo.GetByID(ctx, userID)
+	if err != nil {
+		return "", "", err
+	}
+	return u.DisplayName, u.Email, nil
+}
+
 // GetOrCreateFromOAuth retrieves an existing user linked to the OAuth identity,
 // or creates a new one. Returns the user and true if newly created.
 func (s *UserService) GetOrCreateFromOAuth(ctx context.Context, provider, providerID, emailAddr, displayName string) (*User, bool, error) {

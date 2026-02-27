@@ -103,6 +103,14 @@ type UserEmailChecker interface {
 	IsEmailVerified(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
+// OwnerInfoFetcher retrieves identity details for a NAP-hosted agent owner.
+// Used to embed the owner's display name (CN) and verified email (Email SAN)
+// in the agent's X.509 certificate at activation time.
+// *users.UserService satisfies this interface.
+type OwnerInfoFetcher interface {
+	GetOwnerInfo(ctx context.Context, userID uuid.UUID) (displayName, email string, err error)
+}
+
 // RemoteResolver resolves agents that are not found in the local registry by
 // querying federated peer registries. *federation.RemoteResolver satisfies this.
 type RemoteResolver interface {
@@ -122,6 +130,7 @@ type AgentService struct {
 	ledger            trustledger.Ledger    // nil = no ledger writes
 	dnsVerifier       DomainVerifier        // nil = skip domain verification gate
 	emailChecker      UserEmailChecker      // nil = skip email verification gate
+	ownerInfo         OwnerInfoFetcher      // nil = use agent.OwnerDomain for cert CN
 	threatScorer      threat.Scorer         // nil = no threat scoring
 	remoteResolver    RemoteResolver        // nil = no cross-registry resolution
 	webhookDispatcher WebhookDispatcher     // nil = no webhook dispatch
@@ -146,6 +155,12 @@ func NewAgentService(repo agentRepo, issuer *identity.Issuer, ledger trustledger
 // SetEmailChecker configures the email verification checker used for nap_hosted activation.
 func (s *AgentService) SetEmailChecker(ec UserEmailChecker) {
 	s.emailChecker = ec
+}
+
+// SetOwnerInfoFetcher configures the owner info fetcher used to embed the
+// owner's display name and verified email in the agent certificate at activation.
+func (s *AgentService) SetOwnerInfoFetcher(f OwnerInfoFetcher) {
+	s.ownerInfo = f
 }
 
 // SetThreatScorer configures the threat scorer used at registration time.
@@ -513,7 +528,18 @@ func (s *AgentService) Activate(ctx context.Context, id uuid.UUID) (*ActivationR
 	result := &ActivationResult{Agent: agent}
 
 	if s.issuer != nil {
-		cert, err := s.issuer.IssueAgentCert(agent.URI(), agent.OwnerDomain, 365*24*time.Hour)
+		ownerCN, ownerEmail := agent.OwnerDomain, ""
+		if agent.RegistrationType == model.RegistrationTypeNAPHosted && agent.OwnerUserID != nil && s.ownerInfo != nil {
+			displayName, email, err := s.ownerInfo.GetOwnerInfo(ctx, *agent.OwnerUserID)
+			if err != nil {
+				s.logger.Warn("fetch owner info for cert CN (non-fatal)", zap.Error(err))
+			} else {
+				ownerCN = displayName
+				ownerEmail = email
+			}
+		}
+
+		cert, err := s.issuer.IssueAgentCert(agent.URI(), ownerCN, 365*24*time.Hour, ownerEmail)
 		if err != nil {
 			return nil, fmt.Errorf("issue agent cert: %w", err)
 		}

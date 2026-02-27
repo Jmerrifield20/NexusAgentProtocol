@@ -215,7 +215,7 @@ export default function HomePage() {
             {
               step: "3",
               title: "Activate",
-              desc: "Once verified, your agent goes live and receives a NAP Endorsement — a registry-signed certificate of trust. Domain-verified agents also receive a full X.509 identity certificate.",
+              desc: "Once verified, your agent goes live. Every activated agent receives an X.509 identity certificate and a NAP Endorsement. Domain-verified agents get a cert anchored to their domain; personal agents get one with their display name and verified email address embedded.",
             },
             {
               step: "4",

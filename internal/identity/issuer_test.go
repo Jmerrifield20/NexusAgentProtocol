@@ -19,12 +19,12 @@ func newTestCA(t *testing.T) *identity.CAManager {
 	return ca
 }
 
-func TestIssuer_IssueAgentCert(t *testing.T) {
+func TestIssuer_IssueAgentCert_domain(t *testing.T) {
 	ca := newTestCA(t)
 	issuer := identity.NewIssuer(ca)
 
 	agentURI := "agent://nexusagentprotocol.com/finance/taxes/agent_testxyz"
-	cert, err := issuer.IssueAgentCert(agentURI, "example.com", 24*time.Hour)
+	cert, err := issuer.IssueAgentCert(agentURI, "example.com", 24*time.Hour, "")
 	if err != nil {
 		t.Fatalf("IssueAgentCert() error: %v", err)
 	}
@@ -62,6 +62,57 @@ func TestIssuer_IssueAgentCert(t *testing.T) {
 	if !foundURI {
 		t.Errorf("URI SAN %q not found in certificate", agentURI)
 	}
+
+	// Domain-verified cert must have DNS SAN, no email SAN.
+	if len(verified.DNSNames) == 0 {
+		t.Error("domain-verified cert: expected DNS SAN, got none")
+	}
+	if email := identity.AgentOwnerEmailFromCert(verified); email != "" {
+		t.Errorf("domain-verified cert: expected no email SAN, got %q", email)
+	}
+}
+
+func TestIssuer_IssueAgentCert_napHosted(t *testing.T) {
+	ca := newTestCA(t)
+	issuer := identity.NewIssuer(ca)
+
+	agentURI := "agent://nap/finance/taxes/agent_abc"
+	ownerEmail := "jack@example.com"
+	ownerDisplayName := "Jack Merrifield"
+
+	cert, err := issuer.IssueAgentCert(agentURI, ownerDisplayName, 24*time.Hour, ownerEmail)
+	if err != nil {
+		t.Fatalf("IssueAgentCert() (nap_hosted) error: %v", err)
+	}
+
+	verified, err := issuer.VerifyAgentCert(cert.CertPEM)
+	if err != nil {
+		t.Fatalf("VerifyAgentCert() failed: %v", err)
+	}
+
+	// CN must be the user's display name.
+	if verified.Subject.CommonName != ownerDisplayName {
+		t.Errorf("CN: got %q, want %q", verified.Subject.CommonName, ownerDisplayName)
+	}
+
+	// Email SAN must carry the verified email.
+	if got := identity.AgentOwnerEmailFromCert(verified); got != ownerEmail {
+		t.Errorf("email SAN: got %q, want %q", got, ownerEmail)
+	}
+
+	// NAP-hosted cert must have no DNS SAN.
+	if len(verified.DNSNames) != 0 {
+		t.Errorf("nap_hosted cert: unexpected DNS SANs: %v", verified.DNSNames)
+	}
+
+	// URI SAN must still be present.
+	extractedURI, err := identity.AgentURIFromCert(verified)
+	if err != nil {
+		t.Fatalf("AgentURIFromCert() error: %v", err)
+	}
+	if extractedURI != agentURI {
+		t.Errorf("URI SAN: got %q, want %q", extractedURI, agentURI)
+	}
 }
 
 func TestIssuer_AgentURIFromCert(t *testing.T) {
@@ -69,7 +120,7 @@ func TestIssuer_AgentURIFromCert(t *testing.T) {
 	issuer := identity.NewIssuer(ca)
 
 	agentURI := "agent://nexusagentprotocol.com/assistant/agent_abc123"
-	cert, err := issuer.IssueAgentCert(agentURI, "example.com", time.Hour)
+	cert, err := issuer.IssueAgentCert(agentURI, "example.com", time.Hour, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +165,7 @@ func TestIssuer_VerifyAgentCert_rejectsUnknownCA(t *testing.T) {
 	issuer2 := identity.NewIssuer(ca2)
 
 	// Issue with CA1
-	cert, err := issuer1.IssueAgentCert("agent://nexusagentprotocol.com/a/agent_x", "example.com", time.Hour)
+	cert, err := issuer1.IssueAgentCert("agent://nexusagentprotocol.com/a/agent_x", "example.com", time.Hour, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +181,7 @@ func TestIssuer_VerifyPeerCert(t *testing.T) {
 	ca := newTestCA(t)
 	issuer := identity.NewIssuer(ca)
 
-	cert, err := issuer.IssueAgentCert("agent://nexusagentprotocol.com/test/agent_peer", "peer.example.com", time.Hour)
+	cert, err := issuer.IssueAgentCert("agent://nexusagentprotocol.com/test/agent_peer", "peer.example.com", time.Hour, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -268,7 +268,7 @@ export default function DeveloperContent() {
                 { term: "Endpoint",             def: "The physical HTTPS/gRPC URL where the agent currently listens. This is what resolve returns — callers use this to make requests." },
                 { term: "Trust Tier",           def: "A computed credibility label: Trusted (domain-verified + mTLS cert), Verified (domain-verified, no cert), Basic (NAP-hosted, activated), or Unverified (pending / revoked). Included in every agent listing." },
                 { term: "DNS-01 Challenge",     def: "The domain ownership proof mechanism. The registry issues a TXT record value; you publish it under _nexus-challenge.<domain> and call verify." },
-                { term: "Identity Certificate", def: "An X.509 cert signed by the Nexus CA, issued at activation for domain-verified agents. The private key is returned once and never stored by the registry." },
+                { term: "Identity Certificate", def: "An X.509 cert signed by the Nexus CA, issued at activation for all verified agents. Domain-verified agents get a cert with their domain as the CN and DNS SAN. NAP-hosted (personal) agents get a cert with their chosen display name as the CN and their verified email as an Email SAN. The private key is returned once and never stored by the registry." },
                 { term: "NAP Endorsement",      def: "A CA-signed RS256 JWT included in every activated agent's agent card. It attests the agent URI, trust tier, and cert serial. Verifiable via the registry's JWKS endpoint." },
                 { term: "A2A Card",             def: "A JSON file compatible with the Google Agent2Agent protocol, extended with nap:* fields and a skills array. Deploy at /.well-known/agent.json on your domain, or fetch via the registry at /api/v1/agents/:id/agent.json." },
                 { term: "A2A Skills",           def: "Structured capability declarations embedded in the agent card. Each skill has an id, name, description, and optional tags array. Skills are auto-derived from the capability taxonomy if not explicitly provided at registration via the skills field." },
@@ -403,7 +403,7 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \\
             <div className="space-y-3">
               {[
                 { state: "pending",    color: "bg-yellow-100 text-yellow-700",  desc: "Created by POST /agents. Domain ownership (or email for nap_hosted) has not yet been verified. The agent is not resolvable." },
-                { state: "active",     color: "bg-green-100 text-green-700",    desc: "Activated after verification passes. For domain agents, an X.509 cert and NAP endorsement are issued. For hosted agents, email verification is required." },
+                { state: "active",     color: "bg-green-100 text-green-700",    desc: "Activated after verification passes. All verified agents receive an X.509 cert and NAP endorsement. Domain agents prove DNS-01 ownership first; hosted agents require a verified email address." },
                 { state: "suspended",  color: "bg-orange-100 text-orange-700",  desc: "Temporarily disabled via POST /agents/:id/suspend. The agent is not resolvable but can be restored to active with POST /agents/:id/restore." },
                 { state: "deprecated", color: "bg-purple-100 text-purple-700",  desc: "Marked end-of-life via POST /agents/:id/deprecate. Still resolves, but responses include Sunset, X-NAP-Deprecated, and X-NAP-Replacement headers so callers can migrate." },
                 { state: "revoked",    color: "bg-red-100 text-red-700",        desc: "Permanently revoked via POST /agents/:id/revoke (with reason). The agent remains in the registry but resolve returns an error. Added to the CRL." },
@@ -542,8 +542,8 @@ app.listen(3000);`}</Code>
                 },
                 {
                   tier: "basic",
-                  how:  "nap_hosted registration + active + email verified",
-                  desc: "No domain ownership required. Identity is bound to a verified email address under nexusagentprotocol.com. NAP endorsement is included.",
+                  how:  "nap_hosted registration + active + email verified + X.509 cert (email SAN)",
+                  desc: "No domain ownership required. Identity is bound to a verified email address. An X.509 cert is issued with the owner's chosen display name as the CN and their verified email as an Email SAN — cryptographic proof of ownership without DNS control. NAP endorsement is included.",
                 },
                 {
                   tier: "unverified",
@@ -748,7 +748,9 @@ curl -s "http://localhost:8080/api/v1/agents?trust_root=acme.com&capability_node
   "status": "activated",
   "agent":  { ... },
 
-  // X.509 cert (domain-verified agents only)
+  // X.509 cert — issued for all verified agents
+  // Domain-verified: CN=acme.com, DNS SAN=acme.com
+  // NAP-hosted:      CN=<display name>, Email SAN=<verified email>
   "certificate":     { "serial": "3f9a...", "pem": "-----BEGIN CERTIFICATE-----..." },
   "private_key_pem": "-----BEGIN RSA PRIVATE KEY-----...",
   "ca_pem":          "-----BEGIN CERTIFICATE-----...",
@@ -1313,15 +1315,31 @@ curl -s -X POST http://localhost:8080/api/v1/agents/<UUID>/revoke \\
           {/* Agent-to-Agent mTLS */}
           <Section title="Agent-to-Agent mTLS" {...s("mtls")}>
             <p>
-              Domain-verified agents receive an X.509 certificate at activation, enabling mutual TLS
-              authentication between agents. NAP-hosted agents use Bearer tokens instead.
+              Every verified agent — domain or NAP-hosted — receives an X.509 certificate at activation,
+              enabling mutual TLS authentication between agents. The cert is signed by the Nexus CA and
+              cryptographically binds the agent to its owner's identity.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3 text-xs">
+              <div className="rounded-lg border border-indigo-100 bg-white p-3">
+                <p className="font-semibold text-indigo-700 mb-1">Domain-verified agent cert</p>
+                <p className="text-gray-500">CN = <code className="font-mono">acme.com</code> (the verified domain)<br/>DNS SAN = <code className="font-mono">acme.com</code><br/>URI SAN = <code className="font-mono">agent://acme.com/…</code></p>
+              </div>
+              <div className="rounded-lg border border-emerald-100 bg-white p-3">
+                <p className="font-semibold text-emerald-700 mb-1">NAP-hosted (personal) agent cert</p>
+                <p className="text-gray-500">CN = <code className="font-mono">Jack Merrifield</code> (your chosen display name)<br/>Email SAN = <code className="font-mono">jack@example.com</code> (registry-verified)<br/>URI SAN = <code className="font-mono">agent://nap/…</code></p>
+              </div>
+            </div>
+            <p>
+              When an agent connects to yours via mTLS you can inspect the peer certificate to answer
+              "who owns this agent?" — no registry lookup required. The Nexus CA signature means the
+              claim (domain or email) was independently verified at registration time.
             </p>
 
             <p className="font-medium text-gray-800">What you receive at activation</p>
             <div className="space-y-3">
               <div className="rounded-lg border border-gray-200 bg-white p-4">
                 <p className="font-semibold text-gray-900 mb-1">certificate.pem</p>
-                <p className="text-xs text-gray-500">Your agent's X.509 certificate signed by the Nexus CA. Contains your agent:// URI as a SAN (Subject Alternative Name).</p>
+                <p className="text-xs text-gray-500">Your agent's X.509 certificate signed by the Nexus CA. Always contains a URI SAN (<code className="font-mono">agent://…</code>). Domain agents also get a DNS SAN. Personal agents get an Email SAN carrying the owner's registry-verified email address.</p>
               </div>
               <div className="rounded-lg border border-gray-200 bg-white p-4">
                 <p className="font-semibold text-gray-900 mb-1">private_key_pem</p>
@@ -1368,16 +1386,25 @@ server := &http.Server{
 server.ListenAndServeTLS("server-cert.pem", "server-key.pem")`}</Code>
 
             <p className="font-medium text-gray-800">Extract caller identity from the peer certificate</p>
-            <Code>{`func agentURIFromRequest(r *http.Request) string {
+            <Code>{`func callerFromRequest(r *http.Request) (agentURI, ownerEmail string) {
     if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-        return ""
+        return "", ""
     }
-    for _, uri := range r.TLS.PeerCertificates[0].URIs {
+    cert := r.TLS.PeerCertificates[0]
+
+    // URI SAN — always present for all NAP agent certs
+    for _, uri := range cert.URIs {
         if uri.Scheme == "agent" {
-            return uri.String() // e.g. "agent://acme.com/finance/agent_7x2v9q"
+            agentURI = uri.String() // e.g. "agent://acme.com/finance/agent_7x2v9q"
         }
     }
-    return ""
+
+    // Email SAN — present for NAP-hosted (personal) agents only
+    // e.g. "jack@example.com" — registry-verified at activation time
+    if len(cert.EmailAddresses) > 0 {
+        ownerEmail = cert.EmailAddresses[0]
+    }
+    return
 }`}</Code>
 
             <p className="font-medium text-gray-800">Check the Certificate Revocation List</p>
@@ -1395,9 +1422,8 @@ for _, entry := range crl.Entries {
     fmt.Printf("Revoked: serial=%s reason=%s\\n", entry.CertSerial, entry.Reason)
 }`}</Code>
 
-            <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3 text-amber-800 text-xs">
-              <strong>NAP-hosted agents</strong> do not receive X.509 certificates. They authenticate
-              using Bearer tokens (User JWT or Task Token) instead of mTLS.
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-blue-800 text-xs">
+              <strong>Identifying the owner:</strong> inspect <code className="font-mono">cert.Subject.CommonName</code> for the owner's display name and <code className="font-mono">cert.EmailAddresses</code> for their verified email (NAP-hosted agents) or <code className="font-mono">cert.DNSNames</code> for their verified domain (domain-verified agents). All claims are Nexus-CA-signed.
             </div>
           </Section>
 
