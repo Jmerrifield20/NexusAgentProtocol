@@ -1,35 +1,18 @@
-# Nexus Agent Protocol (NAP)
+# Nexus Agent Protocol (NAP) — Integration Guide
 
-> A open standard for agent identity, discovery, and authenticated agent-to-agent communication over the internet.
+> Connect your AI agent to the internet with a verified identity, resolvable address, and authenticated agent-to-agent communication.
 
 ---
 
 ## What is NAP?
 
-NAP is a protocol that gives AI agents a stable, verifiable identity on the internet — similar to how domains identify websites, but for agents. It answers three questions that no existing protocol does together:
+NAP gives AI agents a stable, verifiable identity on the internet — similar to how domains identify websites, but for agents. It answers three questions:
 
-1. **Who is this agent?** — verified identity (DNS-01 domain ownership for org agents; email verification for personal agents), X.509 certificate issued by the Nexus CA
-2. **Where does it live?** — resolvable `agent://` URI → HTTPS endpoint
-3. **Is it authorised to call me?** — mTLS + scoped JWT Task Tokens
+1. **Who is this agent?** — verified identity backed by DNS-01 domain ownership or email verification; X.509 certificate issued by the Nexus CA
+2. **Where does it live?** — a permanent `agent://` URI that resolves to an HTTPS endpoint
+3. **Is it authorised to call me?** — mutual TLS and scoped RS256 JWT Task Tokens
 
----
-
-## The Landscape (February 2026)
-
-| Protocol | Discovery URL | Live deployments |
-|----------|--------------|-----------------|
-| **Google A2A** | `/.well-known/agent.json` | 0 (announced, not deployed) |
-| **Anthropic MCP** | `/.well-known/mcp.json` | ~1 (Notion) |
-| **OpenAI Plugins** (deprecated) | `/.well-known/ai-plugin.json` | ~2 (Taskade, Zapier — legacy) |
-| **NAP** | `/.well-known/agent-card.json` | first-mover |
-
-NAP is the only protocol that combines a central registry, DNS-01 domain ownership verification, and mutual TLS identity in a single coherent design.
-
----
-
-## Core Concepts
-
-### 1. The `agent://` URI
+### The `agent://` URI
 
 Every NAP agent has a permanent, human-readable address:
 
@@ -40,56 +23,42 @@ agent://acme.com/finance/reconcile-invoices/agent_7x2v9qaabbccdd
          root
 ```
 
-| Part | Meaning |
-|------|---------|
-| `acme.com` | Trust root — verified domain (or `nap` for free-hosted agents) |
+| Segment | Meaning |
+|---------|---------|
+| `acme.com` | Trust root — your verified domain, or `nap` for NAP-hosted agents |
 | `finance` | Category — top-level capability namespace |
-| `reconcile-invoices` | Primary skill — slugified skill ID, derived at registration |
+| `reconcile-invoices` | Primary skill — derived from your capability node at registration |
 | `agent_7x2v9q…` | Agent ID — opaque unique identifier assigned at registration |
 
 The URI is permanent. The underlying endpoint (IP/URL) can change; the URI does not.
 
-When a meaningful sub-skill cannot be derived (top-level capability only), the 3-segment form is used:
+When the capability is top-level only (no sub-skill), the shorter 3-segment form is used:
 
 ```
 agent://nap/assistant/agent_abc123
 ```
 
-See the [NAP URI Standard](./spec/nap-uri-standard.md) for the full derivation rules.
+### The Registry
 
-### 2. The Registry
+The Nexus Registry is the central identity coordinator for NAP. It:
 
-The Nexus Registry is the central NIC (Name and Identity Coordinator) for NAP. It:
-
-- Verifies domain ownership via **DNS-01 challenge** (same mechanism as Let's Encrypt)
-- Issues **X.509 certificates** to registered agents (4096-bit RSA, signed by the Nexus CA)
+- Verifies identity via DNS-01 challenge (domain agents) or email verification (NAP-hosted agents)
+- Issues X.509 certificates to registered agents (4096-bit RSA, signed by the Nexus CA)
 - Resolves `agent://` URIs to live HTTPS endpoints
-- Maintains a **Trust Ledger** — an append-only hash chain of all registration events
+- Maintains a Trust Ledger — an append-only hash chain of all registration events
 
-### 3. DNS-01 Domain Verification
+### The Agent Card
 
-Before an agent can be registered, the operator must prove they control the domain:
-
-```
-Registry generates:  _nexus-agent-challenge.example.com  TXT  "nexus-agent-challenge=TOKEN"
-Operator publishes:  the TXT record in their DNS
-Registry verifies:   DNS lookup confirms the record
-```
-
-This is the same mechanism used by Let's Encrypt for TLS certificates.
-
-### 4. The Agent Card
-
-Every NAP domain **optionally** publishes a discovery file at:
+Every NAP domain optionally publishes a discovery file at:
 
 ```
 https://example.com/.well-known/agent-card.json
 ```
 
-This lists all active agents for that domain. The Nexus registry also serves this on behalf of registered domains at:
+The Nexus registry also serves this on behalf of registered domains at:
 
 ```
-https://registry.nexusagentprotocol.com/.well-known/agent-card.json?domain=example.com
+https://api.nexusagentprotocol.com/.well-known/agent-card.json?domain=example.com
 ```
 
 **Example agent-card.json:**
@@ -97,16 +66,16 @@ https://registry.nexusagentprotocol.com/.well-known/agent-card.json?domain=examp
 ```json
 {
   "schema_version": "1.0",
-  "domain": "example.com",
+  "domain": "acme.com",
   "trust_root": "nexusagentprotocol.com",
-  "updated_at": "2026-02-20T12:00:00Z",
+  "updated_at": "2026-02-27T12:00:00Z",
   "agents": [
     {
-      "uri": "agent://acme.com/ecommerce/retail/agent_7x2v9q",
-      "display_name": "Acme Store",
-      "description": "Handles orders, inventory, and invoicing for Acme.",
+      "uri": "agent://acme.com/finance/billing/agent_7x2v9q",
+      "display_name": "Acme Billing Agent",
+      "description": "Handles invoicing and payment reconciliation.",
       "endpoint": "https://agents.acme.com",
-      "capability_node": "ecommerce>retail",
+      "capability_node": "finance>billing",
       "protocols": ["https"],
       "status": "active"
     }
@@ -114,7 +83,7 @@ https://registry.nexusagentprotocol.com/.well-known/agent-card.json?domain=examp
 }
 ```
 
-### 5. Authentication — mTLS + Task Tokens
+### Authentication — mTLS + Task Tokens
 
 NAP uses a two-layer authentication model:
 
@@ -127,91 +96,254 @@ Agent A                         Nexus Registry                     Agent B
   │── GET /resolve?uri=agent://... ──>│                               │
   │<─ { endpoint: "https://..." } ────│                               │
   │                                   │                               │
-  │── POST https://agents.b.com/v1/order                              │
+  │── POST https://agents.b.com/v1/task                               │
   │   Authorization: Bearer <JWT>  ──────────────────────────────────>│
   │<─ 200 OK ─────────────────────────────────────────────────────────│
 ```
 
 - **mTLS cert** — proves to the registry that you are who you say you are
-- **JWT Task Token** — a scoped, short-lived token (RS256) the registry issues after verifying your cert
-- **Bearer token on agent call** — the receiving agent validates the JWT against the registry's JWKS endpoint
+- **JWT Task Token** — a scoped, short-lived RS256 token the registry issues after verifying your cert
+- **Bearer token on agent call** — the receiving agent validates the JWT against the registry JWKS endpoint
 
 ---
 
-## Integration Guide for Your Bot
+## Path A: NAP-Hosted Registration
 
-### Step 1 — Obtain the Go SDK
+Use this path if you do not own a domain or want to get started quickly. Your agent's trust root will be `nap`, giving a URI like `agent://nap/finance/billing/agent_xxx`.
 
-```go
-import "github.com/jmerrifield20/NexusAgentProtocol/pkg/client"
-```
+**Requirement:** a verified email address.
 
-### Step 2 — Register Your Bot (one-time)
-
-Use the `nap` CLI:
+### Step 1 — Create an account
 
 ```bash
-nap claim yourdomain.com \
-  --registry https://registry.nexusagentprotocol.com \
-  --capability "assistant/general" \
-  --name "My Bot" \
-  --endpoint https://yourdomain.com/agent
+curl -X POST https://api.nexusagentprotocol.com/api/v1/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com", "password": "yourpassword"}'
 ```
 
-This will:
-1. Ask you to add a DNS TXT record to prove you own `yourdomain.com`
-2. Register the agent in the Nexus registry
-3. Issue an X.509 certificate
-4. Write cert files to `~/.nap/certs/yourdomain.com/`:
-   - `cert.pem` — your agent's certificate
-   - `key.pem` — private key (keep secret, mode 0600)
-   - `ca.pem` — the Nexus CA certificate
+Check your inbox and follow the verification link. Registration is blocked until your email is verified.
 
-### Step 3 — Connect Your Bot to NAP
+### Step 2 — Log in and get a user token
 
-```go
-package main
+```bash
+curl -X POST https://api.nexusagentprotocol.com/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com", "password": "yourpassword"}'
+```
 
-import (
-    "context"
-    "log"
-    "net/http"
-    "os"
+```json
+{ "token": "eyJ..." }
+```
 
-    "github.com/jmerrifield20/NexusAgentProtocol/pkg/client"
-)
+Save this token — you will use it to register and manage your agents.
 
-func main() {
-    // Load certs written by 'nap claim'
-    c, err := client.NewFromCertDir(
-        "https://registry.nexusagentprotocol.com",
-        os.ExpandEnv("$HOME/.nap/certs/yourdomain.com"),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
+### Step 3 — Register your agent
 
-    ctx := context.Background()
+```bash
+curl -X POST https://api.nexusagentprotocol.com/api/v1/agents \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "registration_type": "nap_hosted",
+    "display_name": "My Assistant",
+    "description": "A general-purpose assistant agent.",
+    "capability": "assistant>general",
+    "endpoint": "https://myagent.example.com"
+  }'
+```
 
-    // Call any other NAP agent — resolve + auth + call in one step
-    var reply map[string]any
-    err = c.CallAgent(ctx,
-        "agent://acme.com/finance/billing/agent_7x2v9q",
-        http.MethodPost, "/v1/invoice",
-        map[string]any{"amount": 100, "currency": "USD"},
-        &reply,
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    log.Printf("response: %+v", reply)
+```json
+{
+  "agent": {
+    "id": "3f9a1b2c-...",
+    "agent_uri": "agent://nap/assistant/general/agent_7x2v9q",
+    "status": "pending"
+  }
 }
 ```
 
-### Step 4 — Accept Incoming NAP Calls
+Note the `id` — you will need it to activate.
 
-Add the NAP middleware to your existing HTTP server. It validates the incoming JWT against the Nexus JWKS endpoint:
+### Step 4 — Activate and receive your certificate
+
+Activation is gated on your email being verified. Once it is:
+
+```bash
+curl -X POST https://api.nexusagentprotocol.com/api/v1/agents/$AGENT_ID/activate \
+  -H "Authorization: Bearer $USER_TOKEN"
+```
+
+```json
+{
+  "cert_pem": "-----BEGIN CERTIFICATE-----\n...",
+  "private_key_pem": "-----BEGIN RSA PRIVATE KEY-----\n...",
+  "ca_pem": "-----BEGIN CERTIFICATE-----\n..."
+}
+```
+
+> **Important:** `private_key_pem` is returned once and never stored by the registry. Save it securely (file mode `0600`).
+
+Save the three PEM values to `~/.nap/certs/nap/`:
+- `cert.pem`
+- `key.pem`
+- `ca.pem`
+
+Your agent is now `active` with URI `agent://nap/assistant/general/agent_7x2v9q`.
+
+---
+
+## Path B: Domain-Verified Registration
+
+Use this path to register an agent under your own domain. Your agent's trust root will be your domain, giving a URI like `agent://acme.com/finance/billing/agent_xxx`.
+
+**Requirement:** ownership of a domain with the ability to add DNS TXT records.
+
+### Step 1 — Start the DNS-01 challenge
+
+```bash
+curl -X POST https://api.nexusagentprotocol.com/api/v1/dns/challenge \
+  -H "Content-Type: application/json" \
+  -d '{"domain": "acme.com"}'
+```
+
+```json
+{
+  "id": "chal_abc123",
+  "domain": "acme.com",
+  "txt_host": "_nexus-agent-challenge.acme.com",
+  "txt_record": "nexus-agent-challenge=abc123xyz",
+  "status": "pending"
+}
+```
+
+### Step 2 — Publish the TXT record
+
+Add the following DNS record to your domain:
+
+```
+Type:  TXT
+Host:  _nexus-agent-challenge.acme.com
+Value: nexus-agent-challenge=abc123xyz
+```
+
+This is the same mechanism used by Let's Encrypt. DNS propagation typically takes 1–5 minutes.
+
+### Step 3 — Verify the challenge
+
+```bash
+curl -X POST https://api.nexusagentprotocol.com/api/v1/dns/challenge/$CHALLENGE_ID/verify
+```
+
+Returns `{"status": "verified"}` when the TXT record is found, or `{"status": "pending"}` if DNS has not yet propagated — retry after a short wait.
+
+### Step 4 — Register your agent
+
+Once the challenge is verified, register your agent:
+
+```bash
+curl -X POST https://api.nexusagentprotocol.com/api/v1/agents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "registration_type": "domain_verified",
+    "trust_root": "acme.com",
+    "display_name": "Acme Billing Agent",
+    "description": "Handles invoicing and payment reconciliation.",
+    "capability": "finance>billing",
+    "endpoint": "https://agents.acme.com"
+  }'
+```
+
+```json
+{
+  "agent": {
+    "id": "7b3c9d1e-...",
+    "agent_uri": "agent://acme.com/finance/billing/agent_7x2v9q",
+    "status": "pending"
+  }
+}
+```
+
+### Step 5 — Activate and receive your certificate
+
+```bash
+curl -X POST https://api.nexusagentprotocol.com/api/v1/agents/$AGENT_ID/activate
+```
+
+```json
+{
+  "cert_pem": "-----BEGIN CERTIFICATE-----\n...",
+  "private_key_pem": "-----BEGIN RSA PRIVATE KEY-----\n...",
+  "ca_pem": "-----BEGIN CERTIFICATE-----\n..."
+}
+```
+
+> **Important:** `private_key_pem` is returned once and never stored by the registry. Save it securely (file mode `0600`).
+
+Save the three PEM values to `~/.nap/certs/acme.com/`:
+- `cert.pem`
+- `key.pem`
+- `ca.pem`
+
+Your agent is now `active` with URI `agent://acme.com/finance/billing/agent_7x2v9q`.
+
+---
+
+## Connecting Your Agent
+
+The steps below are identical regardless of which registration path you used. The only difference is the cert directory path (`~/.nap/certs/nap/` vs `~/.nap/certs/yourdomain.com/`).
+
+### Go SDK — connect with your certs
+
+```go
+import "github.com/jmerrifield20/NexusAgentProtocol/pkg/client"
+
+c, err := client.NewFromCertDir(
+    "https://api.nexusagentprotocol.com",
+    os.ExpandEnv("$HOME/.nap/certs/acme.com"),  // or /nap for NAP-hosted
+)
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+### Call another agent
+
+```go
+var reply map[string]any
+err = c.CallAgent(ctx,
+    "agent://acme.com/finance/billing/agent_7x2v9q",
+    http.MethodPost, "/v1/invoice",
+    map[string]any{"amount": 100, "currency": "USD"},
+    &reply,
+)
+```
+
+`CallAgent` handles resolve → token exchange → authenticated HTTP call in one step.
+
+**Using curl directly:**
+
+```bash
+# 1. Resolve the URI to an endpoint
+curl "https://api.nexusagentprotocol.com/api/v1/resolve?uri=agent://acme.com/finance/billing/agent_7x2v9q"
+# → {"endpoint": "https://agents.acme.com", "status": "active"}
+
+# 2. Exchange your cert for a JWT Task Token
+curl -X POST https://api.nexusagentprotocol.com/api/v1/token \
+  --cert ~/.nap/certs/acme.com/cert.pem \
+  --key  ~/.nap/certs/acme.com/key.pem  \
+  --cacert ~/.nap/certs/acme.com/ca.pem
+# → {"token": "eyJ..."}
+
+# 3. Call the agent
+curl -X POST https://agents.acme.com/v1/invoice \
+  -H "Authorization: Bearer $TASK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"amount": 100, "currency": "USD"}'
+```
+
+### Accept incoming NAP calls
+
+Add the NAP middleware to your HTTP server. It validates the incoming JWT against the Nexus JWKS endpoint:
 
 ```go
 import (
@@ -221,50 +353,371 @@ import (
 
 router := gin.New()
 
-// Protect your agent endpoint — only valid NAP JWT holders can call it
+// Only valid NAP JWT holders can call this endpoint
 router.POST("/agent/*path", identity.RequireToken(oidcIssuerURL), yourHandler)
 ```
 
-The JWKS endpoint is `https://registry.nexusagentprotocol.com/.well-known/jwks.json`.
+The JWKS endpoint is:
+
+```
+https://api.nexusagentprotocol.com/.well-known/jwks.json
+```
+
+The OIDC discovery document is at:
+
+```
+https://api.nexusagentprotocol.com/.well-known/openid-configuration
+```
 
 ---
 
-## API Reference (Registry)
+## Discovering Agents
 
-All endpoints are on the Nexus registry at `https://registry.nexusagentprotocol.com`.
+All discovery endpoints are public and require no authentication.
 
-### Agent Discovery
+### Free-text search
+
+Search across agent name, description, capability, tags, and agent ID:
+
+```bash
+curl "https://api.nexusagentprotocol.com/api/v1/agents?q=billing"
+```
+
+```json
+{
+  "agents": [
+    {
+      "id": "7b3c9d1e-...",
+      "agent_uri": "agent://acme.com/finance/billing/agent_7x2v9q",
+      "display_name": "Acme Billing Agent",
+      "description": "Handles invoicing and payment reconciliation.",
+      "endpoint": "https://agents.acme.com",
+      "capability_node": "finance>billing",
+      "status": "active"
+    }
+  ],
+  "count": 1
+}
+```
+
+### Filter by capability
+
+Use `?capability_node=` to browse by capability. This is a **prefix match** — passing a top-level category returns all agents within it:
+
+```bash
+# All finance agents (billing, accounting, tax, etc.)
+curl "https://api.nexusagentprotocol.com/api/v1/agents?capability_node=finance"
+
+# Only billing agents
+curl "https://api.nexusagentprotocol.com/api/v1/agents?capability_node=finance>billing"
+```
+
+Combine with `?trust_root=` to scope to a specific organisation:
+
+```bash
+# All finance agents registered under acme.com
+curl "https://api.nexusagentprotocol.com/api/v1/agents?trust_root=acme.com&capability_node=finance"
+```
+
+### Filter by skill ID
+
+Find agents that declare a specific skill. Skill IDs are exact-match and indexed:
+
+```bash
+curl "https://api.nexusagentprotocol.com/api/v1/agents?skill=reconcile-invoices"
+```
+
+### Filter by MCP tool name
+
+Find agents that expose a specific MCP tool:
+
+```bash
+curl "https://api.nexusagentprotocol.com/api/v1/agents?tool=parse_invoice"
+```
+
+### Filter by owner
+
+Find all agents registered by a specific NAP user:
+
+```bash
+curl "https://api.nexusagentprotocol.com/api/v1/agents?username=acmecorp"
+```
+
+### Pagination
+
+All list endpoints support `?limit=` (max 200, default 50) and `?offset=`:
+
+```bash
+# First page
+curl "https://api.nexusagentprotocol.com/api/v1/agents?capability_node=finance&limit=20&offset=0"
+
+# Second page
+curl "https://api.nexusagentprotocol.com/api/v1/agents?capability_node=finance&limit=20&offset=20"
+```
+
+### Look up a single agent
+
+```bash
+curl "https://api.nexusagentprotocol.com/api/v1/agents/$AGENT_ID"
+```
+
+```json
+{
+  "agent": {
+    "id": "7b3c9d1e-...",
+    "agent_uri": "agent://acme.com/finance/billing/agent_7x2v9q",
+    "display_name": "Acme Billing Agent",
+    "capability_node": "finance>billing",
+    "primary_skill": "billing",
+    "endpoint": "https://agents.acme.com",
+    "status": "active"
+  },
+  "owner": {
+    "username": "acmecorp",
+    "display_name": "Acme Corp",
+    "avatar_url": "https://..."
+  }
+}
+```
+
+### List all agents for a domain
+
+```bash
+curl "https://api.nexusagentprotocol.com/.well-known/agent-card.json?domain=acme.com"
+```
+
+### Browse the capability taxonomy
+
+To see all valid capability nodes before registering or searching:
+
+```bash
+curl "https://api.nexusagentprotocol.com/api/v1/capabilities"
+```
+
+```json
+{
+  "categories": [
+    {
+      "name": "finance",
+      "subcategories": [
+        {
+          "name": "accounting",
+          "items": ["reconciliation"]
+        },
+        {
+          "name": "billing",
+          "items": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## Agent Lifecycle
+
+### States
+
+```
+                  ┌──────────┐
+                  │ pending  │
+                  └────┬─────┘
+                       │ activate
+                  ┌────▼─────┐
+          ┌───────│  active  │───────┐
+          │       └────┬─────┘       │
+          │ suspend    │ deprecate   │ revoke
+     ┌────▼──────┐ ┌───▼──────┐ ┌───▼──────┐
+     │ suspended │ │deprecated│ │ revoked  │
+     └────┬──────┘ └──────────┘ └──────────┘
+          │ restore   (resolvable) (terminal)
+     ┌────▼─────┐
+     │  active  │
+     └──────────┘
+```
+
+| Status | Resolvable | Reversible | Description |
+|--------|-----------|------------|-------------|
+| `pending` | No | — | Registered, awaiting verification |
+| `active` | Yes | — | Fully verified and live |
+| `suspended` | No | Yes | Temporarily offline; can be restored |
+| `deprecated` | Yes (with warnings) | No | Marked for retirement; sunset headers returned on resolve |
+| `revoked` | No | No | Permanently removed from resolution |
+| `expired` | No | No | Certificate or registration expired |
+
+### Suspend and Restore
+
+Suspension temporarily removes an agent from resolution — useful during a security incident, maintenance, or credential rotation.
+
+```bash
+# Suspend
+curl -X POST https://api.nexusagentprotocol.com/api/v1/agents/$AGENT_ID/suspend \
+  -H "Authorization: Bearer $TOKEN"
+
+# Restore
+curl -X POST https://api.nexusagentprotocol.com/api/v1/agents/$AGENT_ID/restore \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Deprecation
+
+Deprecation signals to callers that an agent is being retired. The agent remains resolvable, but resolve responses include warning headers so callers can migrate.
+
+```bash
+curl -X POST https://api.nexusagentprotocol.com/api/v1/agents/$AGENT_ID/deprecate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sunset_date": "2026-09-01", "replacement_uri": "agent://acme.com/finance/billing/agent_new"}'
+```
+
+When a deprecated agent is resolved, the response includes:
+
+| Header | Value |
+|--------|-------|
+| `X-NAP-Deprecated` | `true` |
+| `Sunset` | `2026-09-01` |
+| `X-NAP-Replacement` | `agent://acme.com/finance/billing/agent_new` |
+
+### Revocation
+
+Revocation permanently removes an agent from resolution and records a reason in the Trust Ledger.
+
+```bash
+curl -X POST https://api.nexusagentprotocol.com/api/v1/agents/$AGENT_ID/revoke \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "compromised credentials"}'
+```
+
+### Certificate Revocation List
+
+To check whether a certificate has been revoked:
+
+```bash
+curl https://api.nexusagentprotocol.com/api/v1/crl
+```
+
+```json
+{
+  "entries": [
+    {"cert_serial": "3f9a...", "reason": "compromised", "revoked_at": "2026-02-20T12:00:00Z"}
+  ],
+  "count": 1,
+  "generated_at": "2026-02-27T10:00:00Z"
+}
+```
+
+### Continuous Health Monitoring
+
+The registry continuously probes active agent endpoints to detect outages. Your endpoint must remain reachable.
+
+1. Every 5 minutes, the registry sends a `HEAD` request to your registered endpoint. If `HEAD` fails, it falls back to `GET`. Any 2xx response is a pass.
+2. After 3 consecutive failures, your agent's health status is set to `degraded`. It remains resolvable but callers may see a `health: degraded` field in the resolve response.
+3. Once your endpoint responds successfully again, health is restored to `healthy` automatically.
+
+---
+
+## Security Model
+
+### Threat mitigations
+
+| Threat | Mitigation |
+|--------|-----------|
+| Impersonating an agent | mTLS — requires the CA-issued private key |
+| DNS hijacking during registration | DNS-01 challenge uses a random token with short expiry |
+| Stolen JWT | Short TTL (default 1h); scoped to specific agent |
+| Registry compromise | Trust Ledger provides tamper-evident audit trail |
+| Man-in-the-middle | TLS on all connections; HTTPS-only endpoints enforced |
+| Replayed tokens | JWT `jti` claim; `exp` enforcement |
+| Abusive or malicious agent | Abuse reporting system; admin review and resolution workflow |
+| Compromised credentials | Suspend immediately (reversible); revoke with reason for permanent removal |
+| Stale or abandoned agents | Deprecation with sunset date and replacement URI; health checker detects unresponsive endpoints |
+| Revoked cert still trusted | Public CRL at `/api/v1/crl` lists all revoked cert serials |
+
+### Privacy model
+
+The Nexus registry is a **pure phonebook**. Its job is to map `agent://` URIs to endpoints — and nothing else.
+
+**What the registry does not do:**
+
+| What you might expect | What actually happens |
+|-----------------------|----------------------|
+| Log resolve queries | Not logged. No record is kept of who looked up whom. |
+| Show agent owners their caller list | Not possible. Resolve calls leave no trace. |
+| Track query frequency or patterns | Not tracked. No analytics are collected on lookups. |
+| Proxy agent-to-agent traffic | Never. After the lookup, agents communicate directly. |
+
+**What the registry does store:**
+
+1. Registration metadata — URI, endpoint, capability node, primary skill, skill IDs, MCP tool names, display name, status
+2. Trust Ledger entries — lifecycle events: `register`, `activate`, `revoke`, `suspend`, `restore`, `deprecate`
+3. X.509 certificates — the public cert issued at activation (private key is never stored)
+4. User accounts — email and password hash (NAP-hosted agents only)
+5. Abuse reports — reporter, reason, resolution status (no agent traffic is inspected)
+6. Webhook subscriptions — subscriber URL and event filter
+
+**The flow after a lookup:**
+
+```
+Agent A                    Nexus Registry              Agent B
+   │                            │                          │
+   │── GET /resolve?uri=... ───>│                          │
+   │<── { endpoint: "https://…" }                          │
+   │                            │  (registry is done)      │
+   │──────── POST https://agents.b.com/v1/... ────────────>│
+   │<──────── 200 OK ──────────────────────────────────────│
+```
+
+The registry has no visibility into what Agent A and Agent B say to each other.
+
+---
+
+## API Reference
+
+All endpoints are on `https://api.nexusagentprotocol.com`.
+
+### Auth (NAP-hosted path)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/.well-known/agent-card.json?domain=X` | None | List all active agents for a domain |
-| `GET` | `/api/v1/agents/:id` | None | Get agent details by UUID |
-| `GET` | `/api/v1/agents?trust_root=X&capability_node=Y` | None | Filter agents by org / capability |
-| `GET` | `/api/v1/agents?skill=reconcile-invoices` | None | Find agents by declared skill ID (indexed) |
-| `GET` | `/api/v1/agents?tool=parse_invoice` | None | Find agents by MCP tool name (indexed) |
-| `GET` | `/api/v1/agents?q=billing` | None | Full-text search across name, description, tags |
+| `POST` | `/api/v1/auth/signup` | None | Create an account (email + password) |
+| `POST` | `/api/v1/auth/login` | None | Log in; returns user JWT |
+| `POST` | `/api/v1/auth/verify-email` | None | Consume email verification token |
+| `POST` | `/api/v1/auth/resend-verification` | None | Re-send verification email |
+| `GET` | `/api/v1/auth/oauth/:provider` | None | Begin OAuth flow (GitHub or Google) |
 
 ### Agent Lifecycle
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `POST` | `/api/v1/dns/challenge` | None | Start DNS-01 domain verification |
-| `POST` | `/api/v1/dns/challenge/:id/verify` | None | Verify the TXT record |
-| `POST` | `/api/v1/agents` | DNS verified | Register a new agent |
-| `POST` | `/api/v1/agents/:id/activate` | mTLS | Issue X.509 cert; returns cert + private key |
-| `DELETE` | `/api/v1/agents/:id` | mTLS | Revoke agent |
-| `POST` | `/api/v1/agents/:id/suspend` | Agent/User | Suspend agent (reversible; blocks resolution) |
-| `POST` | `/api/v1/agents/:id/restore` | Agent/User | Restore a suspended agent to active |
-| `POST` | `/api/v1/agents/:id/deprecate` | Agent/User | Mark agent as deprecated with optional sunset date |
+| `GET` | `/api/v1/dns/challenge/:id` | None | Poll challenge status |
+| `POST` | `/api/v1/dns/challenge/:id/verify` | None | Trigger DNS TXT lookup |
+| `POST` | `/api/v1/agents` | None / User JWT | Register a new agent |
+| `GET` | `/api/v1/agents/:id` | None | Get agent details |
+| `PATCH` | `/api/v1/agents/:id` | mTLS / User JWT | Update agent metadata |
+| `POST` | `/api/v1/agents/:id/activate` | mTLS / User JWT | Issue X.509 cert; returns cert + private key |
+| `POST` | `/api/v1/agents/:id/revoke` | mTLS | Revoke agent (records reason; writes to Trust Ledger) |
+| `DELETE` | `/api/v1/agents/:id` | mTLS | Permanently delete agent record |
+| `POST` | `/api/v1/agents/:id/suspend` | mTLS / User JWT | Suspend agent (reversible; blocks resolution) |
+| `POST` | `/api/v1/agents/:id/restore` | mTLS / User JWT | Restore a suspended agent to active |
+| `POST` | `/api/v1/agents/:id/deprecate` | mTLS / User JWT | Mark deprecated with optional sunset date |
+| `GET` | `/api/v1/users/me/agents` | User JWT | List all agents owned by the authenticated user |
 
-### Revocation & Trust
+### Discovery
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/api/v1/crl` | None | Certificate Revocation List (revoked cert serials) |
-| `POST` | `/api/v1/agents/:id/report-abuse` | User | Report an agent for abuse (max 3 open per user) |
-| `GET` | `/api/v1/admin/abuse-reports` | Admin | List abuse reports (filterable by status) |
-| `PATCH` | `/api/v1/admin/abuse-reports/:id` | Admin | Resolve or dismiss an abuse report |
+| `GET` | `/.well-known/agent-card.json?domain=X` | None | List all active agents for a domain |
+| `GET` | `/api/v1/agents` | None | Filter agents by trust root, capability, skill, tool, or free text |
+| `GET` | `/api/v1/agents?q=billing` | None | Full-text search across name, description, tags, agent ID |
+| `GET` | `/api/v1/agents?skill=reconcile-invoices` | None | Find agents by declared skill ID |
+| `GET` | `/api/v1/agents?tool=parse_invoice` | None | Find agents by MCP tool name |
+| `GET` | `/api/v1/agents/:id/agent.json` | None | A2A-spec agent card for a single agent |
+| `GET` | `/api/v1/agents/:id/mcp-manifest.json` | None | MCP manifest for a single agent |
+| `GET` | `/api/v1/capabilities` | None | Full capability taxonomy as nested JSON |
 
 ### Resolution
 
@@ -274,19 +727,20 @@ All endpoints are on the Nexus registry at `https://registry.nexusagentprotocol.
 | `POST` | `/api/v1/resolve/batch` | None | Resolve up to 100 URIs in one request |
 | `POST` | `/api/v1/token` | mTLS | Exchange cert for JWT Task Token |
 
+### Revocation & Trust
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/v1/crl` | None | Certificate Revocation List (all revoked cert serials) |
+| `POST` | `/api/v1/agents/:id/report-abuse` | User JWT | Report an agent for abuse |
+
 ### Webhooks
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `POST` | `/api/v1/webhooks` | User | Subscribe to lifecycle events |
-| `GET` | `/api/v1/webhooks` | User | List your webhook subscriptions |
-| `DELETE` | `/api/v1/webhooks/:id` | User | Delete a webhook subscription |
-
-### Observability
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/metrics` | None | Prometheus metrics (request rates, latency, agent counts) |
+| `POST` | `/api/v1/webhooks` | User JWT | Subscribe to lifecycle events |
+| `GET` | `/api/v1/webhooks` | User JWT | List your webhook subscriptions |
+| `DELETE` | `/api/v1/webhooks/:id` | User JWT | Delete a webhook subscription |
 
 ### Trust Ledger
 
@@ -305,32 +759,32 @@ All endpoints are on the Nexus registry at `https://registry.nexusagentprotocol.
 
 ---
 
-## SDK Quick Reference
+## SDK Quick Reference (Go)
 
 ```go
-// Connect (unauthenticated — for resolution only)
-c, err := client.New("https://registry.nexusagentprotocol.com")
+// Connect — no auth (resolution and discovery only)
+c, err := client.New("https://api.nexusagentprotocol.com")
 
-// Connect (authenticated — load certs from disk)
-c, err := client.NewFromCertDir(registryURL, "~/.nap/certs/yourdomain.com")
+// Connect — authenticated (load certs from disk)
+c, err := client.NewFromCertDir(registryURL, "~/.nap/certs/acme.com")
 
 // Resolve a URI to an endpoint
 result, err := c.Resolve(ctx, "agent://acme.com/finance/billing/agent_7x2v9q")
-// result.Endpoint → "https://billing.acme.com"
+// result.Endpoint → "https://agents.acme.com"
 
 // Batch resolve (up to 100 URIs)
 results, err := c.ResolveBatch(ctx, []string{
     "agent://acme.com/finance/billing/agent_1",
-    "agent://acme.com/legal/contracts/agent_2",
+    "agent://nap/assistant/general/agent_2",
 })
 
 // Call another agent (resolve + auth + HTTP in one step)
 err = c.CallAgent(ctx, uri, method, path, reqBody, &respBody)
 
-// DNS challenge flow (for scripted registration)
-challenge, err := c.StartDNSChallenge(ctx, "yourdomain.com")
+// DNS challenge flow
+challenge, err := c.StartDNSChallenge(ctx, "acme.com")
 // publish challenge.TXTHost / challenge.TXTRecord in your DNS
-err = c.VerifyDNSChallenge(ctx, challenge.ID)  // returns ErrVerificationPending if not ready
+err = c.VerifyDNSChallenge(ctx, challenge.ID)
 
 // Register + activate
 agent, err := c.RegisterAgent(ctx, client.RegisterAgentRequest{...})
@@ -341,9 +795,9 @@ certs, err := c.ActivateAgent(ctx, agent.ID)
 agents, err := c.ListAgents(ctx, "acme.com", "finance")
 
 // Lifecycle management
-err = c.RevokeAgent(ctx, agentID, "compromised credentials")  // with reason
-err = c.SuspendAgent(ctx, agentID)                             // reversible
-err = c.RestoreAgent(ctx, agentID)                             // undo suspend
+err = c.RevokeAgent(ctx, agentID, "compromised credentials")
+err = c.SuspendAgent(ctx, agentID)
+err = c.RestoreAgent(ctx, agentID)
 
 // Certificate Revocation List
 crl, err := c.GetCRL(ctx)
@@ -352,306 +806,13 @@ crl, err := c.GetCRL(ctx)
 
 ---
 
-## MCP Bridge (Claude Desktop / Claude API)
-
-If your bot is Claude-based, you can expose NAP as MCP tools without writing any code:
-
-```json
-// ~/.claude/claude_desktop_config.json
-{
-  "mcpServers": {
-    "nap": {
-      "command": "/path/to/nap-mcp-bridge",
-      "args": [
-        "--registry", "https://registry.nexusagentprotocol.com",
-        "--cert-dir", "/Users/you/.nap/certs/yourdomain.com"
-      ]
-    }
-  }
-}
-```
-
-This gives Claude four tools:
-
-| Tool | What it does |
-|------|-------------|
-| `resolve_agent` | Translate an `agent://` URI to its live HTTPS endpoint |
-| `list_agents` | Search the registry by capability or trust root |
-| `fetch_agent_card` | Read any domain's `/.well-known/agent-card.json` |
-| `call_agent` | Resolve + authenticate + call an agent in one step |
-
----
-
-## Capability Node Taxonomy
-
-Capability nodes are hierarchical paths using `>` as separator (up to 3 levels).
-Use the most specific node that describes your agent — the last segment of your
-capability path automatically becomes your agent's `primary_skill` URI segment.
-
-```
-assistant>
-  general          — agent://nap/assistant/general/agent_xxx
-  coding           — agent://nap/assistant/coding/agent_xxx
-  research         — agent://nap/assistant/research/agent_xxx
-
-finance>
-  billing          — agent://nap/finance/billing/agent_xxx
-  accounting>
-    reconciliation — agent://nap/finance/reconciliation/agent_xxx
-  tax              — agent://nap/finance/tax/agent_xxx
-
-ecommerce>
-  retail           — agent://nap/ecommerce/retail/agent_xxx
-  orders           — agent://nap/ecommerce/orders/agent_xxx
-  inventory        — agent://nap/ecommerce/inventory/agent_xxx
-
-data>
-  analytics        — agent://nap/data/analytics/agent_xxx
-  etl              — agent://nap/data/etl/agent_xxx
-
-media>
-  image            — agent://nap/media/image/agent_xxx
-  video            — agent://nap/media/video/agent_xxx
-  audio            — agent://nap/media/audio/agent_xxx
-```
-
-A top-level-only capability (e.g. `assistant`) produces a 3-segment URI
-(`agent://nap/assistant/agent_xxx`) with no primary skill. Provide a 2- or
-3-level path, or declare explicit skills at registration, to get the 4-segment form.
-
-Use the `--capability` flag in `nap claim` to set your node, e.g. `--capability finance>billing`.
-
----
-
-## Trust Ledger
-
-Every lifecycle event is appended to an append-only hash chain (similar to a blockchain but without consensus overhead). This provides:
-
-- **Auditability** — anyone can verify the full history of the registry
-- **Tamper evidence** — any modification to a past entry breaks the chain
-- **Root hash** — a single hash represents the entire registry state at any point in time
-
-The genesis entry has hash `0000…0000` (64 zeros). Every subsequent entry hashes `previousHash + timestamp + payload`.
-
-Verify the ledger at any time:
-
-```bash
-curl https://registry.nexusagentprotocol.com/api/v1/ledger/verify
-# {"valid": true, "length": 42, "root": "a3f2..."}
-```
-
----
-
-## Security Model
-
-| Threat | Mitigation |
-|--------|-----------|
-| Impersonating an agent | mTLS — requires the CA-issued private key |
-| DNS hijacking during registration | DNS-01 challenge uses a random token; short expiry |
-| Stolen JWT | Short TTL (default 1h); scoped to specific agent |
-| Registry compromise | Trust Ledger provides tamper-evident audit trail |
-| Man-in-the-middle | TLS on all connections; HTTPS-only endpoints enforced |
-| Replayed tokens | JWT `jti` (token ID) claim; `exp` enforcement |
-| Abusive or malicious agent | Abuse reporting system; admin review and resolution workflow |
-| Compromised agent credentials | Suspend immediately (reversible); revoke with reason for permanent removal |
-| Stale or abandoned agents | Deprecation with sunset date and replacement URI; health checker detects unresponsive endpoints |
-| Revoked cert still trusted | Public CRL endpoint at `/api/v1/crl` lists all revoked cert serials |
-
----
-
-## Privacy Model
-
-The Nexus registry is a **pure phonebook**. Its job is to map `agent://` URIs to endpoints — and nothing else.
-
-### What the registry does not do
-
-| What you might expect | What actually happens |
-|-----------------------|----------------------|
-| Log resolve queries | Not logged. No record is kept of who looked up whom. |
-| Show agent owners their caller list | Not possible. Resolve calls leave no trace. |
-| Track query frequency or patterns | Not tracked. No analytics are collected on lookups. |
-| Proxy agent-to-agent traffic | Never. After the lookup, agents communicate directly. |
-
-### What the registry does store
-
-The only persistent data is:
-
-1. **Registration metadata** — agent URI, endpoint URL, capability node, primary skill, skill IDs, MCP tool names, display name, status
-2. **Trust Ledger entries** — lifecycle events: `register`, `activate`, `revoke`, `suspend`, `restore`, `deprecate`, `update`
-3. **X.509 certificates** — the public cert issued at activation (private key is never stored)
-4. **User accounts** — email and password hash for free-tier hosted agents
-5. **Abuse reports** — reporter, reason, resolution status (no agent traffic is inspected)
-6. **Webhook subscriptions** — subscriber URL and event filter (delivery payloads contain only agent metadata)
-
-### The flow after a lookup
-
-```
-Agent A                    Nexus Registry              Agent B
-   │                            │                          │
-   │── GET /resolve?uri=... ───>│                          │
-   │<── { endpoint: "https://…" }                          │
-   │                            │  (registry is done)      │
-   │──────── POST https://agents.b.com/v1/... ────────────>│
-   │<──────── 200 OK ──────────────────────────────────────│
-```
-
-The registry sees the resolve request and nothing after it. It has no visibility into what Agent A and Agent B say to each other.
-
-### Why this matters
-
-An agent's endpoint is public by design — it is listed in the registry so others can call it. What is **not** public, and what NAP deliberately never captures, is the social graph of which agents talk to which other agents. That information belongs to the agents themselves, not to the registry operator.
-
-This is a **deliberate design choice**, not a limitation. A coordination layer should coordinate — not surveil.
-
----
-
-## Agent Lifecycle States
-
-An agent transitions through the following statuses:
-
-```
-                  ┌──────────┐
-                  │ pending  │
-                  └────┬─────┘
-                       │ activate
-                  ┌────▼─────┐
-          ┌───────│  active   │───────┐
-          │       └────┬─────┘       │
-          │ suspend    │ deprecate   │ revoke
-     ┌────▼─────┐ ┌───▼──────┐ ┌───▼──────┐
-     │suspended │ │deprecated│ │ revoked  │
-     └────┬─────┘ └──────────┘ └──────────┘
-          │ restore                (terminal)
-     ┌────▼─────┐
-     │  active   │
-     └──────────┘
-```
-
-| Status | Resolvable | Reversible | Description |
-|--------|-----------|------------|-------------|
-| `pending` | No | -- | Registered, awaiting verification |
-| `active` | Yes | -- | Fully verified and live |
-| `suspended` | No | Yes (restore) | Temporarily blocked; can be restored to active |
-| `deprecated` | Yes (with warnings) | No | Marked for retirement; sunset headers returned on resolve |
-| `revoked` | No | No | Permanently removed from resolution |
-| `expired` | No | No | Certificate or registration expired |
-
-### Suspend and Restore
-
-Suspension is a reversible action for temporarily taking an agent offline (e.g. during a security incident, maintenance, or credential rotation):
-
-```bash
-# Suspend
-curl -X POST https://registry.nexusagentprotocol.com/api/v1/agents/<UUID>/suspend \
-  -H "Authorization: Bearer $TOKEN"
-
-# Restore
-curl -X POST https://registry.nexusagentprotocol.com/api/v1/agents/<UUID>/restore \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-Suspended agents are excluded from resolve queries. Only suspended agents can be restored; revoked agents cannot.
-
-### Deprecation
-
-Deprecation signals to callers that an agent is being retired. The agent remains resolvable, but resolve responses include warning headers:
-
-```bash
-curl -X POST https://registry.nexusagentprotocol.com/api/v1/agents/<UUID>/deprecate \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"sunset_date": "2026-06-01", "replacement_uri": "agent://acme.com/finance/agent_new"}'
-```
-
-When a deprecated agent is resolved, the response includes:
-
-| Header | Value |
-|--------|-------|
-| `X-NAP-Deprecated` | `true` |
-| `Sunset` | `2026-06-01` |
-| `X-NAP-Replacement` | `agent://acme.com/finance/agent_new` |
-
-### Revocation with Reason
-
-Revocation now accepts an optional reason string that is recorded in the Trust Ledger:
-
-```bash
-curl -X POST https://registry.nexusagentprotocol.com/api/v1/agents/<UUID>/revoke \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"reason": "compromised credentials"}'
-```
-
-### Certificate Revocation List (CRL)
-
-The CRL endpoint returns all revoked agent certificate serials:
-
-```bash
-curl https://registry.nexusagentprotocol.com/api/v1/crl
-```
-
-```json
-{
-  "entries": [
-    {"cert_serial": "3f9a...", "reason": "compromised", "revoked_at": "2026-02-20T12:00:00Z"}
-  ],
-  "count": 1,
-  "generated_at": "2026-02-24T10:00:00Z"
-}
-```
-
----
-
-## Continuous Health Monitoring
-
-The registry continuously probes active agent endpoints to detect outages. Agents that fail to respond are flagged as degraded.
-
-### How it works
-
-1. Every `check_interval` (default 5 minutes), the health checker probes all active agent endpoints.
-2. A probe sends `HEAD` to the endpoint. If that fails, it falls back to `GET`. Any 2xx response is a success.
-3. After `fail_threshold` (default 3) consecutive failures, the agent's health status is set to `degraded`.
-4. Once a degraded agent responds successfully, it is restored to `healthy`.
-5. Only **transitions** (healthy to degraded, or degraded to healthy) write to the database and Trust Ledger.
-
-### Configuration
-
-```yaml
-health:
-  check_interval: "5m"    # how often to probe endpoints
-  probe_timeout: "10s"    # per-probe HTTP timeout
-  fail_threshold: 3       # consecutive failures before degrading
-```
-
----
-
-## Abuse Reporting
-
-Users can report agents for abuse. Reports are reviewed by registry administrators.
-
-```bash
-# Report an agent (requires user token)
-curl -X POST https://registry.nexusagentprotocol.com/api/v1/agents/<UUID>/report-abuse \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"reason": "impersonation", "details": "This agent claims to be from our company."}'
-```
-
-- Each user can have at most **3 open reports** per agent (prevents spam).
-- Report statuses: `open` → `investigating` → `resolved` or `dismissed`.
-- Administrators review reports at `GET /api/v1/admin/abuse-reports` and resolve them with `PATCH /api/v1/admin/abuse-reports/:id`.
-
----
-
-## Webhook Events
+## Webhooks
 
 Subscribe to agent lifecycle events and receive HMAC-signed HTTP POST notifications.
 
-### Subscribe
-
 ```bash
-curl -X POST https://registry.nexusagentprotocol.com/api/v1/webhooks \
-  -H "Authorization: Bearer $TOKEN" \
+curl -X POST https://api.nexusagentprotocol.com/api/v1/webhooks \
+  -H "Authorization: Bearer $USER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://hooks.example.com/nap",
@@ -672,90 +833,101 @@ curl -X POST https://registry.nexusagentprotocol.com/api/v1/webhooks \
 
 ### Delivery
 
-- Each delivery includes an `X-NAP-Signature` header containing an HMAC-SHA256 signature of the payload, computed with the subscription secret.
-- Failed deliveries are retried up to 3 times with exponential backoff (1s, 5s, 25s).
-- Delivery history is recorded per subscription.
+Each delivery includes an `X-NAP-Signature` header — HMAC-SHA256 of the payload body, computed with your subscription secret. Failed deliveries are retried up to 3 times with exponential backoff (1s, 5s, 25s).
 
-### Manage subscriptions
-
-```bash
-# List your subscriptions
-curl https://registry.nexusagentprotocol.com/api/v1/webhooks \
-  -H "Authorization: Bearer $TOKEN"
-
-# Delete a subscription
-curl -X DELETE https://registry.nexusagentprotocol.com/api/v1/webhooks/<ID> \
-  -H "Authorization: Bearer $TOKEN"
-```
-
----
-
-## Batch Resolve
+### Batch Resolve
 
 Resolve up to 100 `agent://` URIs in a single request:
 
 ```bash
-curl -X POST https://registry.nexusagentprotocol.com/api/v1/resolve/batch \
+curl -X POST https://api.nexusagentprotocol.com/api/v1/resolve/batch \
   -H "Content-Type: application/json" \
-  -d '{"uris": ["agent://acme.com/finance/agent_1", "agent://nap/assistant/agent_2"]}'
+  -d '{"uris": ["agent://acme.com/finance/billing/agent_1", "agent://nap/assistant/general/agent_2"]}'
 ```
 
 ```json
 {
   "results": [
-    {"uri": "agent://acme.com/finance/agent_1", "endpoint": "https://agents.acme.com", "status": "active"},
-    {"uri": "agent://nap/assistant/agent_2", "error": "agent not found"}
+    {"uri": "agent://acme.com/finance/billing/agent_1", "endpoint": "https://agents.acme.com", "status": "active"},
+    {"uri": "agent://nap/assistant/general/agent_2", "error": "agent not found"}
   ],
   "count": 2
 }
 ```
 
-Partial failures are OK — each result has its own `error` field. Resolution runs with bounded concurrency (10 parallel lookups).
+Partial failures are fine — each result has its own `error` field.
 
 ---
 
-## Prometheus Metrics
+## Capability Node Taxonomy
 
-The registry exposes a `/metrics` endpoint in Prometheus exposition format.
+Capability nodes are hierarchical paths using `>` as the separator (up to 3 levels). Use the most specific node that describes your agent. The last segment of your capability path automatically becomes your agent's `primary_skill` URI segment.
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `nap_agents_total` | Gauge | `status` | Total agents by status |
-| `nap_requests_total` | Counter | `method`, `path`, `status` | HTTP requests by method, path, and status code |
-| `nap_request_duration_seconds` | Histogram | `method`, `path` | Request latency distribution |
-| `nap_health_checks_total` | Counter | `result` | Health check probe results |
-| `nap_ledger_entries_total` | Counter | -- | Trust Ledger entries appended |
-| `nap_webhook_deliveries_total` | Counter | `success` | Webhook delivery attempts |
+```
+assistant>
+  general          → agent://nap/assistant/general/agent_xxx
+  coding           → agent://nap/assistant/coding/agent_xxx
+  research         → agent://nap/assistant/research/agent_xxx
+
+finance>
+  billing          → agent://nap/finance/billing/agent_xxx
+  accounting>
+    reconciliation → agent://nap/finance/reconciliation/agent_xxx
+  tax              → agent://nap/finance/tax/agent_xxx
+
+ecommerce>
+  retail           → agent://nap/ecommerce/retail/agent_xxx
+  orders           → agent://nap/ecommerce/orders/agent_xxx
+  inventory        → agent://nap/ecommerce/inventory/agent_xxx
+
+data>
+  analytics        → agent://nap/data/analytics/agent_xxx
+  etl              → agent://nap/data/etl/agent_xxx
+
+media>
+  image            → agent://nap/media/image/agent_xxx
+  video            → agent://nap/media/video/agent_xxx
+  audio            → agent://nap/media/audio/agent_xxx
+```
+
+A top-level-only capability (e.g. `assistant`) produces a 3-segment URI (`agent://nap/assistant/agent_xxx`) with no primary skill. Provide a 2- or 3-level path, or declare explicit skills at registration, to get the 4-segment form.
+
+The full taxonomy is available at:
+
+```bash
+curl https://api.nexusagentprotocol.com/api/v1/capabilities
+```
 
 ---
 
-## Comparison with A2A and MCP
+## Quick Start Checklists
 
-| | NAP | Google A2A | Anthropic MCP |
-|-|-----|-----------|--------------|
-| **Primary use case** | Agent-to-agent internet calls | Agent-to-agent (enterprise) | Model-to-local-tool calls |
-| **Transport** | HTTPS + mTLS | HTTPS | stdio / SSE |
-| **Identity** | X.509 + DNS-01 | Unspecified | None (local trust) |
-| **Discovery** | `/.well-known/agent-card.json` | `/.well-known/agent.json` | Manual config |
-| **Central registry** | Yes (Nexus) | No | No |
-| **Live deployments** | First-mover | 0 | ~1 (Notion) |
-| **Token standard** | RS256 JWT | Unspecified | None |
-| **Audit trail** | Trust Ledger | None | None |
+### NAP-Hosted (no domain required)
 
----
-
-## Quick Start Checklist
-
-- [ ] Run `nap claim yourdomain.com` to register your agent
-- [ ] Add DNS TXT record when prompted (verifies ownership)
-- [ ] Save certs from `~/.nap/certs/yourdomain.com/` securely
+- [ ] `POST /api/v1/auth/signup` — create your account
+- [ ] Verify your email via the link in your inbox
+- [ ] `POST /api/v1/auth/login` — get your user token
+- [ ] `POST /api/v1/agents` with `registration_type: nap_hosted` — register your agent
+- [ ] `POST /api/v1/agents/:id/activate` — receive your cert and private key
+- [ ] Save `cert.pem`, `key.pem`, `ca.pem` securely (mode `0600`)
 - [ ] Call other agents with `client.CallAgent(ctx, agentURI, ...)`
-- [ ] Protect your own endpoint with `identity.RequireToken(issuerURL)`
-- [ ] Optionally: deploy `nap-mcp-bridge` for Claude Desktop integration
+- [ ] Protect your endpoint with `identity.RequireToken(issuerURL)`
+- [ ] Optionally: subscribe to webhook events for lifecycle notifications
 - [ ] Optionally: publish `/.well-known/agent-card.json` on your own domain
-- [ ] Optionally: subscribe to webhook events for real-time notifications
-- [ ] Optionally: monitor `/metrics` with Prometheus/Grafana
+
+### Domain-Verified
+
+- [ ] `POST /api/v1/dns/challenge` — start DNS-01 verification for your domain
+- [ ] Publish the TXT record in your DNS
+- [ ] `POST /api/v1/dns/challenge/:id/verify` — confirm the record is live
+- [ ] `POST /api/v1/agents` with `registration_type: domain_verified` — register your agent
+- [ ] `POST /api/v1/agents/:id/activate` — receive your cert and private key
+- [ ] Save `cert.pem`, `key.pem`, `ca.pem` securely (mode `0600`)
+- [ ] Call other agents with `client.CallAgent(ctx, agentURI, ...)`
+- [ ] Protect your endpoint with `identity.RequireToken(issuerURL)`
+- [ ] Optionally: publish `/.well-known/agent-card.json` on your own domain
+- [ ] Optionally: subscribe to webhook events for lifecycle notifications
 
 ---
 
-*NAP is an open protocol. The registry source is at `github.com/jmerrifield20/NexusAgentProtocol`.*
+*NAP is an open protocol. Registry source: `github.com/jmerrifield20/NexusAgentProtocol`*
