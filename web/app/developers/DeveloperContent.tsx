@@ -128,7 +128,7 @@ const NAV = [
   { id: "endpoint-reqs",      label: "Endpoint Requirements" },
   { id: "trust-tiers",        label: "Trust Tiers" },
   { id: "dns-verification",   label: "DNS-01 Verification" },
-  { id: "connecting-agents",  label: "Connecting to Other Agents" },
+  { id: "connecting-agents",  label: "Calling Other Agents" },
   { id: "a2a",                label: "A2A Compatibility" },
   { id: "mcp-manifest",       label: "MCP Manifest" },
   { id: "threat-scoring",     label: "Threat Scoring" },
@@ -263,7 +263,7 @@ export default function DeveloperContent() {
             <div className="grid gap-4 sm:grid-cols-2">
               {[
                 { term: "Trust Root",          def: "The org that anchors the agent's identity. For domain-verified agents this is the full verified domain (e.g. acme.com), proved via DNS-01 — so agent://acme.com/… can only ever be ACME, not acme.io or amazon.fakeaccount.com. For hosted agents it is always nap — the registry-controlled namespace." },
-                { term: "Capability Node",      def: "A label describing what the agent does — e.g. finance or support. Appears as the second segment of the agent:// URI (after the org namespace). Supports up to three levels separated by > (e.g. finance>accounting>reconciliation); sub-levels are indexed for search but not encoded in the URI." },
+                { term: "Capability Node",      def: "A hierarchical label describing what the agent does — e.g. finance>billing. The top-level category becomes the second URI segment; the final level becomes the primary skill (third segment). Supports up to three levels separated by > (e.g. finance>accounting>reconciliation). Use the most specific node that describes your agent." },
                 { term: "Agent ID",             def: "A short unique identifier generated at registration — e.g. agent_7x2v9q. Stable even if the endpoint URL changes." },
                 { term: "Endpoint",             def: "The physical HTTPS/gRPC URL where the agent currently listens. This is what resolve returns — callers use this to make requests." },
                 { term: "Trust Tier",           def: "A computed credibility label: Trusted (domain-verified + mTLS cert), Verified (domain-verified, no cert), Basic (NAP-hosted, activated), or Unverified (pending / revoked). Included in every agent listing." },
@@ -374,7 +374,7 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \\
 # Returns:
 # {
 #   "agent":         { "id": "...", "status": "pending", ... },
-#   "agent_uri":     "agent://acme.com/finance/agent_xxx",
+#   "agent_uri":     "agent://acme.com/finance/tax-filing/agent_xxx",
 #   "threat_report": { "score": 8, "severity": "none", "findings": [], "rejected": false }
 # }`}</Code>
               </div>
@@ -573,6 +573,7 @@ app.listen(3000);`}</Code>
   "uri":               "agent://acme.com/finance/agent_7x2v9q",
   "display_name":      "Acme Tax Agent",
   "status":            "active",
+  "agent_uri":         "agent://acme.com/finance/tax-filing/agent_7x2v9q",
   "trust_tier":        "trusted",
   "registration_type": "domain",
   "cert_serial":       "3f9a...",
@@ -629,7 +630,7 @@ _nexus-challenge.acme.com.  IN  TXT  "nexus-verify=abc123xyz..."`}</Code>
           </Section>
 
           {/* Connecting to Other Agents */}
-          <Section title="Connecting to Other Agents" {...s("connecting-agents")}>
+          <Section title="Calling Other Agents" {...s("connecting-agents")}>
             <p>
               The core pattern is <strong>resolve → authenticate → call</strong>. Given an{" "}
               <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-nexus-500">agent://</code> URI,
@@ -637,14 +638,14 @@ _nexus-challenge.acme.com.  IN  TXT  "nexus-verify=abc123xyz..."`}</Code>
             </p>
 
             <p className="font-medium text-gray-800">1 — Resolve a single URI</p>
-            <Code>{`# Resolve an agent URI to its live endpoint
-curl -s "http://localhost:8080/api/v1/resolve?trust_root=acme.com&capability_node=finance&agent_id=agent_7x2v9q"
+            <Code>{`# Resolve an agent:// URI to its live endpoint
+curl -s "http://localhost:8080/api/v1/resolve?uri=agent://acme.com/finance/billing/agent_7x2v9q"
 
 # Response:
 {
   "id":          "550e8400-...",
-  "uri":         "agent://acme.com/finance/agent_7x2v9q",
-  "endpoint":    "https://agents.acme.com/tax",
+  "uri":         "agent://acme.com/finance/billing/agent_7x2v9q",
+  "endpoint":    "https://agents.acme.com",
   "status":      "active",
   "cert_serial": "3f9a..."
 }`}</Code>
@@ -652,13 +653,13 @@ curl -s "http://localhost:8080/api/v1/resolve?trust_root=acme.com&capability_nod
             <Code>{`c, _ := client.New("https://registry.nexusagentprotocol.com")
 
 // Manual resolve then call
-result, _ := c.Resolve(ctx, "agent://acme.com/finance/agent_7x2v9q")
-// result.Endpoint → "https://agents.acme.com/tax"
+result, _ := c.Resolve(ctx, "agent://acme.com/finance/billing/agent_7x2v9q")
+// result.Endpoint → "https://agents.acme.com"
 
 // One-liner: auto-resolve + auto-auth + call
 var resp TaxResponse
 err := c.CallAgent(ctx,
-    "agent://acme.com/finance/agent_7x2v9q",
+    "agent://acme.com/finance/billing/agent_7x2v9q",
     "POST", "/calculate",
     &TaxRequest{Income: 100000, Year: 2026},
     &resp,
@@ -666,28 +667,27 @@ err := c.CallAgent(ctx,
 // resp is populated with the agent's JSON response`}</Code>
 
             <p className="font-medium text-gray-800">2 — Batch resolve (up to 100 URIs)</p>
-            <Code>{`# Resolve multiple URIs in one call
-curl -s -X POST http://localhost:8080/api/v1/resolve/batch \\
+            <Code>{`curl -s -X POST http://localhost:8080/api/v1/resolve/batch \\
   -H "Content-Type: application/json" \\
   -d '{
     "uris": [
-      "agent://acme.com/finance/agent_7x2v9q",
-      "agent://globex.com/support/agent_abc123"
+      "agent://acme.com/finance/billing/agent_7x2v9q",
+      "agent://globex.com/support/helpdesk/agent_abc123"
     ]
   }'
 
 # Response:
 {
   "results": [
-    { "uri": "agent://acme.com/finance/agent_7x2v9q",      "endpoint": "https://agents.acme.com/tax",    "status": "active" },
-    { "uri": "agent://globex.com/support/agent_abc123",     "endpoint": "https://agents.globex.com/help", "status": "active" }
+    { "uri": "agent://acme.com/finance/billing/agent_7x2v9q",        "endpoint": "https://agents.acme.com",    "status": "active" },
+    { "uri": "agent://globex.com/support/helpdesk/agent_abc123",     "endpoint": "https://agents.globex.com", "status": "active" }
   ],
   "count": 2
 }`}</Code>
             <p className="font-medium text-gray-800">Go SDK — batch resolve</p>
             <Code>{`results, err := c.ResolveBatch(ctx, []string{
-    "agent://acme.com/finance/agent_7x2v9q",
-    "agent://globex.com/support/agent_abc123",
+    "agent://acme.com/finance/billing/agent_7x2v9q",
+    "agent://globex.com/support/helpdesk/agent_abc123",
 })
 for _, r := range results {
     fmt.Printf("%s → %s (%s)\\n", r.URI, r.Endpoint, r.Status)
@@ -710,21 +710,72 @@ if resp.Header.Get("X-NAP-Deprecated") == "true" {
     log.Printf("Agent deprecated, sunset: %s, migrate to: %s", sunset, replacement)
 }`}</Code>
 
-            <p className="font-medium text-gray-800">4 — Discover agents by org or capability</p>
-            <Code>{`# List agents for an organization
-curl -s "http://localhost:8080/api/v1/agents?trust_root=acme.com"
+            <p className="font-medium text-gray-800">4 — Discover agents</p>
+            <p>All discovery endpoints are public and require no authentication.</p>
 
-# Search by capability (prefix match — "finance" finds finance>accounting>*)
+            <p className="font-medium text-gray-800 text-xs mt-2">Free-text search</p>
+            <p>Search across agent name, description, capability, tags, and agent ID:</p>
+            <Code>{`curl -s "http://localhost:8080/api/v1/agents?q=billing"
+
+# Response:
+{
+  "agents": [
+    {
+      "id":              "7b3c9d1e-...",
+      "agent_uri":       "agent://acme.com/finance/billing/agent_7x2v9q",
+      "display_name":    "Acme Billing Agent",
+      "capability_node": "finance>billing",
+      "status":          "active"
+    }
+  ],
+  "count": 1
+}`}</Code>
+
+            <p className="font-medium text-gray-800 text-xs mt-2">Filter by capability (prefix match)</p>
+            <p>Passing a top-level category returns all agents within it:</p>
+            <Code>{`# All finance agents (billing, accounting, tax, …)
 curl -s "http://localhost:8080/api/v1/agents?capability_node=finance"
 
-# Combine filters
-curl -s "http://localhost:8080/api/v1/agents?trust_root=acme.com&capability_node=finance&limit=10"`}</Code>
+# Only billing agents
+curl -s "http://localhost:8080/api/v1/agents?capability_node=finance>billing"
 
-            <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-blue-800 text-xs">
-              <strong>Caching tip:</strong> Use{" "}
-              <code className="font-mono">client.WithCacheTTL(5 * time.Minute)</code> when creating the Go SDK
-              client to cache resolve results and reduce registry round-trips.
-            </div>
+# Scope to a specific org
+curl -s "http://localhost:8080/api/v1/agents?trust_root=acme.com&capability_node=finance"`}</Code>
+
+            <p className="font-medium text-gray-800 text-xs mt-2">Filter by skill or MCP tool</p>
+            <Code>{`# Agents that declare a specific skill ID (exact match, indexed)
+curl -s "http://localhost:8080/api/v1/agents?skill=reconcile-invoices"
+
+# Agents that expose a specific MCP tool name (exact match, indexed)
+curl -s "http://localhost:8080/api/v1/agents?tool=parse_invoice"`}</Code>
+
+            <p className="font-medium text-gray-800 text-xs mt-2">Filter by owner</p>
+            <Code>{`curl -s "http://localhost:8080/api/v1/agents?username=acmecorp"`}</Code>
+
+            <p className="font-medium text-gray-800 text-xs mt-2">Pagination</p>
+            <Code>{`# limit: max 200, default 50 — offset: default 0
+curl -s "http://localhost:8080/api/v1/agents?capability_node=finance&limit=20&offset=0"
+curl -s "http://localhost:8080/api/v1/agents?capability_node=finance&limit=20&offset=20"`}</Code>
+
+            <p className="font-medium text-gray-800 text-xs mt-2">Single agent lookup</p>
+            <Code>{`curl -s "http://localhost:8080/api/v1/agents/<UUID>"
+
+# Response includes owner info:
+{
+  "agent": {
+    "id":              "7b3c9d1e-...",
+    "agent_uri":       "agent://acme.com/finance/billing/agent_7x2v9q",
+    "display_name":    "Acme Billing Agent",
+    "capability_node": "finance>billing",
+    "primary_skill":   "billing",
+    "status":          "active"
+  },
+  "owner": {
+    "username":     "acmecorp",
+    "display_name": "Acme Corp",
+    "avatar_url":   "https://..."
+  }
+}`}</Code>
           </Section>
 
           {/* A2A Compatibility */}
@@ -1185,7 +1236,7 @@ curl -s -X DELETE http://localhost:8080/api/v1/webhooks/wh_abc123 \\
             <p className="font-semibold text-gray-800 pt-2">Agents</p>
             <div className="space-y-2">
               <Endpoint method="POST"   path="/api/v1/agents"              description='Register a new agent. Optional fields: skills (A2A skill declarations), mcp_tools (MCP tool definitions). Returns {"agent":{...},"agent_uri":"...","threat_report":{...}}. HTTP 422 if threat score ≥ 85.' />
-              <Endpoint method="GET"    path="/api/v1/agents"              description="List registered agents. Supports query params: trust_root, capability_node, limit, offset." />
+              <Endpoint method="GET"    path="/api/v1/agents"              description="List and search registered agents. Query params: q (free-text across name, description, tags, agent ID), trust_root, capability_node (prefix match), skill (exact skill ID), tool (exact MCP tool name), username (owner), limit (max 200, default 50), offset." />
               <Endpoint method="GET"    path="/api/v1/agents/:id"          description="Get a single agent by UUID. Includes trust_tier in the response." />
               <Endpoint method="PATCH"  path="/api/v1/agents/:id"          description="Update mutable fields: display_name, description, endpoint, public_key_pem, metadata. Requires owning agent token or user JWT." auth />
               <Endpoint method="POST"   path="/api/v1/agents/:id/activate" description="Activate an agent after verification. Returns X.509 cert (domain agents), NAP endorsement JWT, agent_card_json with skills, and mcp_manifest_json if MCP tools were declared." />
@@ -1235,17 +1286,6 @@ curl -s -X DELETE http://localhost:8080/api/v1/webhooks/wh_abc123 \\
               <Endpoint method="DELETE" path="/api/v1/webhooks/:id" description="Delete a webhook subscription." auth />
             </div>
 
-            <p className="font-semibold text-gray-800 pt-2">Admin</p>
-            <div className="space-y-2">
-              <Endpoint method="GET"   path="/api/v1/admin/abuse-reports"     description="List all abuse reports." auth badge={{ label: "admin", className: "bg-red-100 text-red-700" }} />
-              <Endpoint method="PATCH" path="/api/v1/admin/abuse-reports/:id" description="Update an abuse report status." auth badge={{ label: "admin", className: "bg-red-100 text-red-700" }} />
-            </div>
-
-            <p className="font-semibold text-gray-800 pt-2">Monitoring</p>
-            <div className="space-y-2">
-              <Endpoint method="GET" path="/healthz"  description='Returns {"status":"ok"} when the registry is up and connected to Postgres.' />
-              <Endpoint method="GET" path="/metrics"   description="Prometheus-format metrics endpoint for monitoring registry operations." />
-            </div>
           </Section>
 
           {/* Trust Ledger */}
